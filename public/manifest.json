@@ -5,10 +5,10 @@
     "width": 12,
     "height": 8
   },
-  "mapping": [
-    {
-      "alias": "rate_card_history",
-      "fields": []
-    }
-  ]
+  "collections": [
+    { "name": "rate_card_history" },
+    { "name": "rate_card_batches" },
+    { "name": "field_definitions" }
+  ],
+  "id": "75a49585-dd65-418d-a47e-1cfd560703e7"
 }

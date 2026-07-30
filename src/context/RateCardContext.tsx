@@ -5,9 +5,10 @@ import {
   IngestionPreviewData,
   RateCardFilterState,
   RateCardMetricSummary,
+  FieldDefinition,
 } from '../types/rateCard';
-import { fetchHistoricalRateCards, saveRateCardsToDomo } from '../services/domoService';
-import { MOCK_BATCH_HISTORY } from '../services/mockData';
+import { fetchHistoricalRateCards, saveRateCardsToDomo, fetchBatches, saveBatchToDomo } from '../services/domoService';
+import { fetchFieldDefinitions, addFieldDefinition, removeFieldDefinition } from '../services/fieldService';
 
 interface RateCardContextType {
   rateCards: RateCardRecord[];
@@ -25,13 +26,17 @@ interface RateCardContextType {
   isLoading: boolean;
   notificationMessage: { type: 'success' | 'error' | 'info'; text: string } | null;
   clearNotification: () => void;
+  fieldDefinitions: FieldDefinition[];
+  addField: (field: FieldDefinition) => Promise<void>;
+  removeField: (key: string) => Promise<void>;
 }
 
 const RateCardContext = createContext<RateCardContextType | undefined>(undefined);
 
 export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [rateCards, setRateCards] = useState<RateCardRecord[]>([]);
-  const [batches, setBatches] = useState<NormalizedIngestionBatch[]>(MOCK_BATCH_HISTORY);
+  const [batches, setBatches] = useState<NormalizedIngestionBatch[]>([]);
+  const [fieldDefinitions, setFieldDefinitions] = useState<FieldDefinition[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'collection'>('dashboard');
   const [previewData, setPreviewData] = useState<IngestionPreviewData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -47,13 +52,29 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const refreshDataset = async () => {
     setIsLoading(true);
     try {
-      const records = await fetchHistoricalRateCards();
+      const [records, batchList, fields] = await Promise.all([
+        fetchHistoricalRateCards(),
+        fetchBatches(),
+        fetchFieldDefinitions(),
+      ]);
       setRateCards(records);
+      setBatches(batchList);
+      setFieldDefinitions(fields);
     } catch (err) {
-      console.error('Failed to load rate card dataset:', err);
+      console.error('Failed to load rate card data:', err);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const addField = async (field: FieldDefinition) => {
+    const updated = await addFieldDefinition(field, fieldDefinitions);
+    setFieldDefinitions(updated);
+  };
+
+  const removeField = async (key: string) => {
+    const updated = await removeFieldDefinition(key, fieldDefinitions);
+    setFieldDefinitions(updated);
   };
 
   useEffect(() => {
@@ -69,8 +90,6 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   ): Promise<boolean> => {
     setIsLoading(true);
     try {
-      const result = await saveRateCardsToDomo(newRecords);
-      
       const newBatch: NormalizedIngestionBatch = {
         batchId: `batch-${Date.now()}`,
         sourceFileName,
@@ -80,6 +99,11 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         status: 'ingested',
         ingestionTimestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
       };
+
+      const [result] = await Promise.all([
+        saveRateCardsToDomo(newRecords),
+        saveBatchToDomo(newBatch),
+      ]);
 
       setBatches(prev => [newBatch, ...prev]);
       setRateCards(prev => [...newRecords, ...prev]);
@@ -190,6 +214,9 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         isLoading,
         notificationMessage,
         clearNotification,
+        fieldDefinitions,
+        addField,
+        removeField,
       }}
     >
       {children}

@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import { ColumnMapping, IngestionPreviewData, TargetFieldType, RateCardRecord } from '../types/rateCard';
+import { ColumnMapping, IngestionPreviewData, TargetFieldType, RateCardRecord, FieldDefinition } from '../types/rateCard';
 
 const HEADER_ALIASES: Record<TargetFieldType, string[]> = {
   jobTitle: ['job title', 'title', 'role', 'position', 'job', 'designation', 'job_title', 'job family'],
@@ -10,6 +10,7 @@ const HEADER_ALIASES: Record<TargetFieldType, string[]> = {
   category: ['category', 'domain', 'practice', 'department', 'vertical', 'business unit'],
   region: ['region', 'location', 'market', 'country', 'geography', 'site', 'office'],
   skillLevel: ['skill level', 'level', 'seniority', 'tier', 'grade', 'experience level'],
+  laborType: ['labor type', 'labour type', 'worker type', 'worker category', 'employment type', 'work type', 'labor_type', 'worker_type', 'type of labor', 'labor classification', 'resource type'],
   currency: ['currency', 'curr', 'currency code'],
   ignore: [],
 };
@@ -194,7 +195,8 @@ export const extractMonthFromFileName = (fileName: string): string => {
 export const normalizeRawData = (
   previewData: IngestionPreviewData,
   finalMappings: ColumnMapping[],
-  effectiveMonth: string
+  effectiveMonth: string,
+  fieldDefinitions: FieldDefinition[] = []
 ): RateCardRecord[] => {
   const getMappedValue = (row: Record<string, any>, targetField: TargetFieldType) => {
     const mapping = finalMappings.find(m => m.targetField === targetField);
@@ -224,7 +226,26 @@ export const normalizeRawData = (
     const category = getMappedValue(row, 'category') || 'General Staffing';
     const region = getMappedValue(row, 'region') || 'North America';
     const skillLevel = getMappedValue(row, 'skillLevel') || 'Standard';
+    const laborType = getMappedValue(row, 'laborType');
     const currency = getMappedValue(row, 'currency') || 'USD';
+
+    // Collect all custom:* mapped fields
+    const customFields: Record<string, string | number> = {};
+    for (const mapping of finalMappings) {
+      if (typeof mapping.targetField === 'string' && mapping.targetField.startsWith('custom:')) {
+        const key = mapping.targetField.replace('custom:', '');
+        const rawVal = row[mapping.rawHeader];
+        if (rawVal !== undefined && rawVal !== '') {
+          const fieldDef = fieldDefinitions.find((f) => f.key === key);
+          if (fieldDef?.fieldType === 'number') {
+            const parsed = parseFloat(String(rawVal).replace(/[^0-9.-]/g, ''));
+            customFields[key] = isNaN(parsed) ? String(rawVal) : parsed;
+          } else {
+            customFields[key] = String(rawVal);
+          }
+        }
+      }
+    }
 
     return {
       id: `rc-${effectiveMonth}-${Date.now()}-${idx}`,
@@ -237,9 +258,11 @@ export const normalizeRawData = (
       category: String(category),
       region: String(region),
       skillLevel: String(skillLevel),
+      laborType: laborType ? String(laborType) : undefined,
       currency: String(currency),
       sourceFileName: previewData.fileName,
       ingestionDate: nowStr,
+      customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
     };
   });
 };

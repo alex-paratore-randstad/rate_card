@@ -1,69 +1,123 @@
-import { RateCardRecord } from '../types/rateCard';
-import { INITIAL_MOCK_RATE_CARDS } from './mockData';
+import { RateCardRecord, NormalizedIngestionBatch } from '../types/rateCard';
 
-const DEFAULT_DATASET_ALIAS = 'rate_card_history';
+const COLLECTION_RECORDS = 'rate_card_history';
+const COLLECTION_BATCHES = 'rate_card_batches';
+
+const COLLECTIONS_BASE = '/domo/datastores/v1/collections';
 
 export const isDomoEnvironment = (): boolean => {
   return typeof window !== 'undefined' && !!window.domo && typeof window.domo.get === 'function';
 };
 
-/**
- * Fetch historical rate card collection from Domo dataset or fallback to local storage / mock data
- */
-export const fetchHistoricalRateCards = async (
-  datasetAlias: string = DEFAULT_DATASET_ALIAS
-): Promise<RateCardRecord[]> => {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Unwrap Domo collection documents — each document has an `id` and `content` field. */
+function unwrapDocuments<T>(docs: any[]): T[] {
+  if (!Array.isArray(docs)) return [];
+  return docs.map((doc) => (doc.content !== undefined ? doc.content : doc)) as T[];
+}
+
+// ---------------------------------------------------------------------------
+// Rate Card Records
+// ---------------------------------------------------------------------------
+
+export const fetchHistoricalRateCards = async (): Promise<RateCardRecord[]> => {
   if (isDomoEnvironment()) {
     try {
-      console.log(`[Domo API] Querying dataset alias: ${datasetAlias}`);
-      const data = await window.domo.get(`/data/v2/${datasetAlias}?limit=1000`);
-      if (Array.isArray(data) && data.length > 0) {
-        return data as RateCardRecord[];
-      }
+      const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`);
+      const records = unwrapDocuments<RateCardRecord>(docs);
+      if (records.length > 0) return records;
     } catch (error) {
-      console.warn('[Domo API] Exception fetching from Domo container, falling back to local dataset:', error);
+      console.warn('[Domo Collections] Error fetching rate card records, using local fallback:', error);
     }
   }
 
-  // Fallback mode: check localStorage or return mock data
-  const localData = localStorage.getItem('randstad_domo_rate_cards');
+  // Local storage fallback (dev / outside Domo)
+  const localData = localStorage.getItem('randstad_rate_cards');
   if (localData) {
     try {
-      return JSON.parse(localData);
+      return JSON.parse(localData) as RateCardRecord[];
+    } catch {
+      // ignore parse errors
+    }
+  }
+
+  return []; // Always start empty — history is built from uploads
+};
+
+export const saveRateCardsToDomo = async (
+  newRecords: RateCardRecord[]
+): Promise<{ success: boolean; message: string }> => {
+  if (isDomoEnvironment()) {
+    try {
+      // POST each record as a separate Collection document
+      await Promise.all(
+        newRecords.map((record) =>
+          window.domo.post(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`, record)
+        )
+      );
+      return {
+        success: true,
+        message: `Saved ${newRecords.length} rate card records to Domo.`,
+      };
+    } catch (error: any) {
+      console.warn('[Domo Collections] Error saving records:', error);
+      // Fall through to local storage fallback
+    }
+  }
+
+  // Local storage fallback
+  const existing = await fetchHistoricalRateCards();
+  const updated = [...newRecords, ...existing];
+  localStorage.setItem('randstad_rate_cards', JSON.stringify(updated));
+  return {
+    success: true,
+    message: `Saved ${newRecords.length} records locally (Local Fallback Mode).`,
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Ingestion Batches
+// ---------------------------------------------------------------------------
+
+export const fetchBatches = async (): Promise<NormalizedIngestionBatch[]> => {
+  if (isDomoEnvironment()) {
+    try {
+      const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`);
+      const batches = unwrapDocuments<NormalizedIngestionBatch>(docs);
+      if (batches.length > 0) return batches;
+    } catch (error) {
+      console.warn('[Domo Collections] Error fetching batches, using local fallback:', error);
+    }
+  }
+
+  const localData = localStorage.getItem('randstad_batches');
+  if (localData) {
+    try {
+      return JSON.parse(localData) as NormalizedIngestionBatch[];
     } catch {
       // ignore
     }
   }
 
-  return INITIAL_MOCK_RATE_CARDS;
+  return []; // No mock data — start clean
 };
 
-/**
- * Save new rate card records to Domo dataset collection or local fallback storage
- */
-export const saveRateCardsToDomo = async (
-  newRecords: RateCardRecord[],
-  datasetAlias: string = DEFAULT_DATASET_ALIAS
-): Promise<{ success: boolean; message: string }> => {
+export const saveBatchToDomo = async (
+  batch: NormalizedIngestionBatch
+): Promise<void> => {
   if (isDomoEnvironment()) {
     try {
-      console.log(`[Domo API] Posting ${newRecords.length} records to dataset alias: ${datasetAlias}`);
-      // In Domo App framework, custom collection persistence can use domo.post or custom endpoints
-      await window.domo.post(`/data/v2/${datasetAlias}`, newRecords);
-      return { success: true, message: `Successfully published ${newRecords.length} records to Domo collection "${datasetAlias}".` };
-    } catch (error: any) {
-      console.warn('[Domo API] Save to Domo returned error:', error);
-      // Still persist locally so app remains interactive
+      await window.domo.post(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`, batch);
+      return;
+    } catch (error) {
+      console.warn('[Domo Collections] Error saving batch:', error);
     }
   }
 
-  // Fallback local storage update
-  const existing = await fetchHistoricalRateCards(datasetAlias);
-  const updatedCollection = [...newRecords, ...existing];
-  localStorage.setItem('randstad_domo_rate_cards', JSON.stringify(updatedCollection));
-
-  return {
-    success: true,
-    message: `Updated local collection with ${newRecords.length} newly normalized rate card records. (Local Fallback Mode)`,
-  };
+  // Local storage fallback
+  const existing = await fetchBatches();
+  localStorage.setItem('randstad_batches', JSON.stringify([batch, ...existing]));
 };

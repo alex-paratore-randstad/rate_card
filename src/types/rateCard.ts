@@ -9,9 +9,11 @@ export interface RateCardRecord {
   category?: string;
   region?: string;
   skillLevel?: string;
+  laborType?: string;
   currency: string;
   sourceFileName?: string;
   ingestionDate: string;
+  customFields?: Record<string, string | number>; // User-defined fields captured at upload
 }
 
 export interface NormalizedIngestionBatch {
@@ -24,7 +26,15 @@ export interface NormalizedIngestionBatch {
   ingestionTimestamp: string;
 }
 
-export type TargetFieldType =
+/** A user-defined mappable field that appears in the column mapping dropdown */
+export interface FieldDefinition {
+  key: string;   // Unique identifier e.g. "site", "mra_min_bill_rate"
+  label: string; // Display label e.g. "Site", "MRA Min Suggested Bill Rate"
+  fieldType: 'text' | 'number';
+}
+
+// Core hardcoded field types that drive analytics
+export type CoreTargetFieldType =
   | 'jobTitle'
   | 'minRate'
   | 'maxRate'
@@ -32,8 +42,12 @@ export type TargetFieldType =
   | 'category'
   | 'region'
   | 'skillLevel'
+  | 'laborType'
   | 'currency'
   | 'ignore';
+
+// Dynamic custom field keys are prefixed with "custom:" e.g. "custom:site"
+export type TargetFieldType = CoreTargetFieldType | `custom:${string}`;
 
 export interface ColumnMapping {
   rawHeader: string;
