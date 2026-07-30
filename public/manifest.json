@@ -1,0 +1,14 @@
+{
+  "name": "Randstad Rate Card Tracker",
+  "version": "1.0.0",
+  "size": {
+    "width": 12,
+    "height": 8
+  },
+  "mapping": [
+    {
+      "alias": "rate_card_history",
+      "fields": []
+    }
+  ]
+}
