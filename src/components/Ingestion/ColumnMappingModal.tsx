@@ -1,32 +1,49 @@
 import React, { useState } from 'react';
 import { CheckCircle2, HelpCircle, ShieldCheck, PlusCircle, X } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
-import { ColumnMapping, TargetFieldType, FieldDefinition } from '../../types/rateCard';
+import { ColumnMapping, TargetFieldType, FieldDefinition, IngestionPreviewData } from '../../types/rateCard';
 import { normalizeRawData } from '../../services/parserService';
 import { labelToKey } from '../../services/fieldService';
+import { formatDateRandstad } from '../../utils/formatters';
 
 const CORE_OPTIONS: { value: TargetFieldType; label: string }[] = [
-  { value: 'jobTitle',       label: 'Job Title / Role' },
-  { value: 'minRate',        label: 'Min Pay Rate' },
-  { value: 'maxRate',        label: 'Max Pay Rate' },
-  { value: 'effectiveMonth', label: 'Effective Month / Date' },
-  { value: 'category',       label: 'Job Category / Practice' },
-  { value: 'region',         label: 'Geography / Region' },
-  { value: 'skillLevel',     label: 'Seniority / Skill Level' },
-  { value: 'laborType',      label: 'Labor Type / Worker Type' },
-  { value: 'currency',       label: 'Currency Code' },
-  { value: 'ignore',         label: '— Do Not Map (Ignore) —' },
+  { value: 'jobTitle',      label: 'Job Title / Role' },
+  { value: 'minRate',       label: 'Min Pay Rate' },
+  { value: 'maxRate',       label: 'Max Pay Rate' },
+  { value: 'effectiveDate', label: 'Effective Date' },
+  { value: 'client',        label: 'Client / Account' },
+  { value: 'reportType',    label: 'Report Type / Name' },
+  { value: 'category',      label: 'Job Category / Practice' },
+  { value: 'region',        label: 'Geography / Region' },
+  { value: 'skillLevel',    label: 'Seniority / Skill Level' },
+  { value: 'laborType',     label: 'Labor Type / Worker Type' },
+  { value: 'currency',      label: 'Currency Code' },
+  { value: 'ignore',        label: '— Do Not Map (Ignore) —' },
 ];
 
+/**
+ * Null guard only. All state lives in the inner component so that hook order
+ * stays constant across renders — an early return above `useState` changes the
+ * hook count the moment a file is parsed and crashes React.
+ *
+ * The `key` also gives each upload a fresh copy of the mapping state, so a
+ * second file in the same session does not inherit the first file's edits.
+ */
 export const ColumnMappingModal: React.FC = () => {
-  const { previewData, setPreviewData, ingestNewBatch, fieldDefinitions, addField } = useRateCard();
-
+  const { previewData } = useRateCard();
   if (!previewData) return null;
+  return <ColumnMappingForm key={previewData.fileName} previewData={previewData} />;
+};
+
+const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ previewData }) => {
+  const { setPreviewData, ingestNewBatch, fieldDefinitions, addField } = useRateCard();
 
   const [mappings, setMappings] = useState<ColumnMapping[]>(previewData.mappings);
-  const [effectiveMonth, setEffectiveMonth] = useState<string>(
-    previewData.detectedMonth || new Date().toISOString().slice(0, 7)
+  const [effectiveDate, setEffectiveDate] = useState<string>(
+    previewData.detectedDate || new Date().toISOString().slice(0, 10)
   );
+  const [client, setClient] = useState<string>(previewData.detectedClient ?? '');
+  const [reportType, setReportType] = useState<string>(previewData.detectedReportType ?? '');
 
   // Inline "Add new field" state
   const [showAddField, setShowAddField] = useState(false);
@@ -42,9 +59,19 @@ export const ColumnMappingModal: React.FC = () => {
     });
   };
 
+  // A batch must always be attributable to a client and a report, otherwise it
+  // cannot be tracked over time — which is the whole point of the tags.
+  const canConfirm = Boolean(effectiveDate && client.trim() && reportType.trim());
+
   const handleConfirmIngestion = async () => {
-    const normalizedRecords = normalizeRawData(previewData, mappings, effectiveMonth, fieldDefinitions);
-    await ingestNewBatch(normalizedRecords, previewData.fileName, effectiveMonth);
+    if (!canConfirm) return;
+    const batchMeta = {
+      effectiveDate,
+      client: client.trim(),
+      reportType: reportType.trim(),
+    };
+    const normalizedRecords = normalizeRawData(previewData, mappings, batchMeta, fieldDefinitions);
+    await ingestNewBatch(normalizedRecords, previewData.fileName, batchMeta);
   };
 
   const handleAddField = async () => {
@@ -64,6 +91,17 @@ export const ColumnMappingModal: React.FC = () => {
     setNewFieldType('text');
     setAddFieldError('');
     setShowAddField(false);
+  };
+
+  /**
+   * Explain where a batch tag's value came from. A mapped column pre-fills the
+   * input but does not lock it — the field below still overrides the whole batch.
+   */
+  const detectionHint = (field: TargetFieldType): string => {
+    const mapping = mappings.find((m) => m.targetField === field);
+    return mapping
+      ? `Detected from the "${mapping.rawHeader}" column; edit to override the whole batch.`
+      : 'No matching column found — this value is applied to every row.';
   };
 
   // Build dropdown options: core + all custom fields from registry
@@ -86,31 +124,65 @@ export const ColumnMappingModal: React.FC = () => {
             <span className="app-subtitle">
               Source file: <strong>{previewData.fileName}</strong> ({previewData.rawRows.length} rows)
             </span>
+            {previewData.detectedRegions && previewData.detectedRegions.length > 0 && (
+              <div style={{ marginTop: '6px' }}>
+                <span className="status-pill info">
+                  {previewData.detectedRegions.length} region bands detected
+                  {previewData.sourceRowCount !== undefined &&
+                    ` — ${previewData.sourceRowCount} source rows expanded to ${previewData.rawRows.length} records`}
+                </span>
+                <span className="text-meta" style={{ display: 'block', marginTop: '4px' }}>
+                  {previewData.detectedRegions.join(', ')}
+                </span>
+              </div>
+            )}
           </div>
           <button className="btn-secondary" onClick={() => setPreviewData(null)}>
             Cancel
           </button>
         </div>
 
-        {/* Effective Reporting Month Selector */}
+        {/* Batch tags — applied to every row of this upload */}
         <div className="tonal-card-sub" style={{ marginBottom: '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div style={{ flex: 1 }}>
-              <label className="form-label">Effective Reporting Month (YYYY-MM):</label>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: '180px' }}>
+              <label className="form-label">Effective Date</label>
               <input
-                type="month"
+                type="date"
                 className="form-control"
-                value={effectiveMonth}
-                onChange={(e) => setEffectiveMonth(e.target.value)}
+                value={effectiveDate}
+                onChange={(e) => setEffectiveDate(e.target.value)}
               />
+              <span style={{ fontSize: '0.78rem', color: '#415E7D' }}>{detectionHint('effectiveDate')}</span>
             </div>
-            <div style={{ flex: 2 }}>
-              <span className="text-meta">INGESTION VALIDATION</span>
-              <p style={{ fontSize: '0.85rem', color: '#415E7D', marginTop: '4px' }}>
-                Normalized records will be indexed under <strong>{effectiveMonth}</strong> in the Domo collection.
-              </p>
+            <div style={{ flex: 1, minWidth: '180px' }}>
+              <label className="form-label">Client / Account</label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. Contoso Health"
+                value={client}
+                onChange={(e) => setClient(e.target.value)}
+              />
+              <span style={{ fontSize: '0.78rem', color: '#415E7D' }}>{detectionHint('client')}</span>
+            </div>
+            <div style={{ flex: 1, minWidth: '180px' }}>
+              <label className="form-label">Report Type / Name</label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. Monthly MRA Rate Card"
+                value={reportType}
+                onChange={(e) => setReportType(e.target.value)}
+              />
+              <span style={{ fontSize: '0.78rem', color: '#415E7D' }}>{detectionHint('reportType')}</span>
             </div>
           </div>
+          <p style={{ fontSize: '0.85rem', color: '#415E7D', marginTop: '12px', marginBottom: 0 }}>
+            Records will be indexed under <strong>{formatDateRandstad(effectiveDate)}</strong>
+            {client.trim() && <> for <strong>{client.trim()}</strong></>}
+            {reportType.trim() && <> as <strong>{reportType.trim()}</strong></>}.
+          </p>
         </div>
 
         {/* Column Mapping Grid */}
@@ -230,18 +302,28 @@ export const ColumnMappingModal: React.FC = () => {
                 </span>
               )}
               {addFieldError && (
-                <span style={{ fontSize: '0.8rem', color: '#D9341B' }}>{addFieldError}</span>
+                <span style={{ fontSize: '0.8rem', color: '#E00F0F' }}>{addFieldError}</span>
               )}
             </div>
           )}
         </div>
 
         {/* Actions */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '12px' }}>
+          {!canConfirm && (
+            <span style={{ fontSize: '0.8rem', color: '#E9A204', marginRight: 'auto' }}>
+              Enter an effective date, a client, and a report type to continue.
+            </span>
+          )}
           <button className="btn-secondary" onClick={() => setPreviewData(null)}>
             Back to Upload
           </button>
-          <button className="btn-primary" onClick={handleConfirmIngestion}>
+          <button
+            className="btn-primary"
+            onClick={handleConfirmIngestion}
+            disabled={!canConfirm}
+            style={{ opacity: canConfirm ? 1 : 0.5, cursor: canConfirm ? 'pointer' : 'not-allowed' }}
+          >
             <CheckCircle2 size={16} />
             <span>Confirm &amp; Publish to Domo Collection</span>
           </button>

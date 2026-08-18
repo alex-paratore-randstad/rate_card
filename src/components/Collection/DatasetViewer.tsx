@@ -9,17 +9,20 @@ export const DatasetViewer: React.FC = () => {
 
   const exportCSV = () => {
     if (rateCards.length === 0) return;
-    const headers = ['ID', 'Job Title', 'Min Rate', 'Max Rate', 'Rate Spread', 'Effective Month', 'Category', 'Region', 'Source File'];
+    const headers = ['ID', 'Job Title', 'Min Rate', 'Max Rate', 'Rate Spread', 'Effective Date', 'Client', 'Report Type', 'Category', 'Region', 'Source File'];
+    const quote = (value?: string) => `"${(value || '').replace(/"/g, '""')}"`;
     const rows = rateCards.map(r => [
       r.id,
-      `"${r.jobTitle.replace(/"/g, '""')}"`,
+      quote(r.jobTitle),
       r.minRate,
       r.maxRate,
       r.rateSpread,
-      r.effectiveMonth,
-      `"${(r.category || '').replace(/"/g, '""')}"`,
-      `"${(r.region || '').replace(/"/g, '""')}"`,
-      `"${(r.sourceFileName || '').replace(/"/g, '""')}"`
+      r.effectiveDate,
+      quote(r.client),
+      quote(r.reportType),
+      quote(r.category),
+      quote(r.region),
+      quote(r.sourceFileName)
     ]);
 
     const csvString = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
@@ -79,7 +82,9 @@ export const DatasetViewer: React.FC = () => {
                 <th>Job Title / Role</th>
                 <th>Min Rate</th>
                 <th>Max Rate</th>
-                <th>Effective Month</th>
+                <th>Effective Date</th>
+                <th>Client</th>
+                <th>Report Type</th>
                 <th>Category</th>
                 <th>Source File</th>
                 <th>Ingested Date</th>
@@ -98,7 +103,9 @@ export const DatasetViewer: React.FC = () => {
                   <td style={{ color: '#255CA9', fontWeight: 600 }}>
                     {formatCurrencyRandstad(record.maxRate, record.currency)}
                   </td>
-                  <td>{record.effectiveMonth}</td>
+                  <td>{formatDateRandstad(record.effectiveDate)}</td>
+                  <td>{record.client || '—'}</td>
+                  <td style={{ fontSize: '0.85rem' }}>{record.reportType || '—'}</td>
                   <td>
                     <span className="status-pill info">{record.category || 'General'}</span>
                   </td>
@@ -118,7 +125,9 @@ export const DatasetViewer: React.FC = () => {
               <tr>
                 <th>Batch ID</th>
                 <th>Source Report File</th>
-                <th>Effective Month</th>
+                <th>Effective Date</th>
+                <th>Client</th>
+                <th>Report Type</th>
                 <th>Records Ingested</th>
                 <th>Ingestion Timestamp</th>
                 <th>Status</th>
@@ -134,7 +143,9 @@ export const DatasetViewer: React.FC = () => {
                       <span>{batch.sourceFileName}</span>
                     </div>
                   </td>
-                  <td>{batch.effectiveMonth}</td>
+                  <td>{formatDateRandstad(batch.effectiveDate)}</td>
+                  <td>{batch.client || '—'}</td>
+                  <td style={{ fontSize: '0.85rem' }}>{batch.reportType || '—'}</td>
                   <td style={{ fontWeight: 600 }}>{batch.recordCount} rows</td>
                   <td style={{ fontSize: '0.85rem' }}>{batch.ingestionTimestamp}</td>
                   <td>

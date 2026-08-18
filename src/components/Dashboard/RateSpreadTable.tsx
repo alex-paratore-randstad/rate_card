@@ -1,13 +1,13 @@
 import React from 'react';
 import { Search } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
-import { formatCurrencyRandstad } from '../../utils/formatters';
+import { formatCurrencyRandstad, formatDateRandstad } from '../../utils/formatters';
 
 export const RateSpreadTable: React.FC = () => {
-  const { filteredRateCards, filters, setFilters, rateCards } = useRateCard();
+  const { filteredRateCards, filters, setFilters, clientScopedRateCards } = useRateCard();
 
-  const categories = Array.from(new Set(rateCards.map((r) => r.category || 'General Staffing'))).sort();
-  const months = Array.from(new Set(rateCards.map((r) => r.effectiveMonth))).sort().reverse();
+  const categories = Array.from(new Set(clientScopedRateCards.map((r) => r.category || 'General Staffing'))).sort();
+  const effectiveDates = Array.from(new Set(clientScopedRateCards.map((r) => r.effectiveDate))).sort().reverse();
 
   return (
     <div className="tonal-card">
@@ -53,14 +53,14 @@ export const RateSpreadTable: React.FC = () => {
 
           <select
             className="form-control"
-            style={{ width: '160px' }}
-            value={filters.selectedMonth}
-            onChange={(e) => setFilters((prev) => ({ ...prev, selectedMonth: e.target.value }))}
+            style={{ width: '180px' }}
+            value={filters.selectedDate}
+            onChange={(e) => setFilters((prev) => ({ ...prev, selectedDate: e.target.value }))}
           >
-            <option value="ALL">All Months</option>
-            {months.map((m) => (
-              <option key={m} value={m}>
-                {m}
+            <option value="ALL">All Effective Dates</option>
+            {effectiveDates.map((d) => (
+              <option key={d} value={d}>
+                {formatDateRandstad(d)}
               </option>
             ))}
           </select>
@@ -76,7 +76,7 @@ export const RateSpreadTable: React.FC = () => {
               <th>Min Rate</th>
               <th>Max Rate</th>
               <th>Rate Spread</th>
-              <th>Effective Month</th>
+              <th>Effective Date</th>
               <th>Source Report</th>
             </tr>
           </thead>
@@ -110,7 +110,7 @@ export const RateSpreadTable: React.FC = () => {
                   <td style={{ fontWeight: 600 }}>
                     {formatCurrencyRandstad(record.rateSpread, record.currency)}
                   </td>
-                  <td>{record.effectiveMonth}</td>
+                  <td>{formatDateRandstad(record.effectiveDate)}</td>
                   <td style={{ fontSize: '0.8rem', color: '#677E95' }}>
                     {record.sourceFileName || 'System Upload'}
                   </td>

@@ -1,22 +1,28 @@
 import React, { useState, useMemo } from 'react';
 import { ArrowRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
-import { formatCurrencyRandstad, formatPercentageDrift } from '../../utils/formatters';
+import { formatCurrencyRandstad, formatPercentageDrift, formatDateRandstad } from '../../utils/formatters';
 
 export const PeriodComparison: React.FC = () => {
-  const { rateCards } = useRateCard();
+  const { clientScopedRateCards: rateCards } = useRateCard();
 
-  const months = useMemo(() => {
-    return Array.from(new Set(rateCards.map((r) => r.effectiveMonth))).sort().reverse();
+  const periods = useMemo(() => {
+    return Array.from(new Set(rateCards.map((r) => r.effectiveDate))).sort().reverse();
   }, [rateCards]);
 
-  const [baseMonth, setBaseMonth] = useState<string>(months[1] || '2026-03');
-  const [targetMonth, setTargetMonth] = useState<string>(months[0] || '2026-04');
+  const [basePeriod, setBasePeriod] = useState<string>('');
+  const [targetPeriod, setTargetPeriod] = useState<string>('');
 
-  // Compute MoM delta per role between baseMonth and targetMonth
+  // Rate cards load asynchronously, so both selectors' first render sees an
+  // empty list. Derive the shown periods rather than latching onto that state.
+  const effectiveBase = basePeriod && periods.includes(basePeriod) ? basePeriod : periods[1] ?? '';
+  const effectiveTarget =
+    targetPeriod && periods.includes(targetPeriod) ? targetPeriod : periods[0] ?? '';
+
+  // Compute the per-role delta between the two selected effective dates
   const comparisonList = useMemo(() => {
-    const baseCards = rateCards.filter((r) => r.effectiveMonth === baseMonth);
-    const targetCards = rateCards.filter((r) => r.effectiveMonth === targetMonth);
+    const baseCards = rateCards.filter((r) => r.effectiveDate === effectiveBase);
+    const targetCards = rateCards.filter((r) => r.effectiveDate === effectiveTarget);
 
     const rolesSet = new Set([
       ...baseCards.map((r) => r.jobTitle),
@@ -47,7 +53,7 @@ export const PeriodComparison: React.FC = () => {
         maxDeltaPercent,
       };
     });
-  }, [rateCards, baseMonth, targetMonth]);
+  }, [rateCards, effectiveBase, effectiveTarget]);
 
   return (
     <div className="tonal-card">
@@ -55,7 +61,7 @@ export const PeriodComparison: React.FC = () => {
         <div>
           <h2>Period over Period Rate Card Comparison</h2>
           <span className="app-subtitle">
-            Compare minimum and maximum rate shifts between monthly reporting cycles
+            Compare minimum and maximum rate shifts between reporting dates
           </span>
         </div>
 
@@ -65,13 +71,13 @@ export const PeriodComparison: React.FC = () => {
             <label className="form-label">Base Period:</label>
             <select
               className="form-control"
-              style={{ width: '150px' }}
-              value={baseMonth}
-              onChange={(e) => setBaseMonth(e.target.value)}
+              style={{ width: '180px' }}
+              value={effectiveBase}
+              onChange={(e) => setBasePeriod(e.target.value)}
             >
-              {months.map((m) => (
-                <option key={`base-${m}`} value={m}>
-                  {m}
+              {periods.map((p) => (
+                <option key={`base-${p}`} value={p}>
+                  {formatDateRandstad(p)}
                 </option>
               ))}
             </select>
@@ -83,13 +89,13 @@ export const PeriodComparison: React.FC = () => {
             <label className="form-label">Comparison Period:</label>
             <select
               className="form-control"
-              style={{ width: '150px' }}
-              value={targetMonth}
-              onChange={(e) => setTargetMonth(e.target.value)}
+              style={{ width: '180px' }}
+              value={effectiveTarget}
+              onChange={(e) => setTargetPeriod(e.target.value)}
             >
-              {months.map((m) => (
-                <option key={`target-${m}`} value={m}>
-                  {m}
+              {periods.map((p) => (
+                <option key={`target-${p}`} value={p}>
+                  {formatDateRandstad(p)}
                 </option>
               ))}
             </select>
@@ -102,8 +108,8 @@ export const PeriodComparison: React.FC = () => {
           <thead>
             <tr>
               <th>Job Title</th>
-              <th>Base Max Rate ({baseMonth})</th>
-              <th>Target Max Rate ({targetMonth})</th>
+              <th>Base Max Rate ({formatDateRandstad(effectiveBase)})</th>
+              <th>Target Max Rate ({formatDateRandstad(effectiveTarget)})</th>
               <th>Rate Change (USD)</th>
               <th>Percentage Shift</th>
             </tr>

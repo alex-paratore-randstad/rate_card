@@ -5,9 +5,17 @@ export interface RateCardRecord {
   maxRate: number;
   avgRate: number;
   rateSpread: number;
-  effectiveMonth: string; // ISO date or "Month YYYY"
+  effectiveDate: string; // Exact effective date, "YYYY-MM-DD"
+  client?: string;       // Client / account the report belongs to
+  reportType?: string;   // Report type or name, for tracking a recurring report over time
   category?: string;
   region?: string;
+  /**
+   * Zero-based position of the region band in the source file, so a pricing
+   * ladder (Base, Mid, Premium) keeps its order in reports. Averages cannot be
+   * used to infer this: a role missing from one tier skews that tier's mean.
+   */
+  regionOrder?: number;
   skillLevel?: string;
   laborType?: string;
   currency: string;
@@ -19,11 +27,20 @@ export interface RateCardRecord {
 export interface NormalizedIngestionBatch {
   batchId: string;
   sourceFileName: string;
-  effectiveMonth: string;
+  effectiveDate: string;
+  client?: string;
+  reportType?: string;
   recordCount: number;
   records: RateCardRecord[];
   status: 'validated' | 'ingested' | 'failed';
   ingestionTimestamp: string;
+}
+
+/** Batch-level tags applied to every row of an upload. */
+export interface BatchMeta {
+  effectiveDate: string;
+  client: string;
+  reportType: string;
 }
 
 /** A user-defined mappable field that appears in the column mapping dropdown */
@@ -38,7 +55,9 @@ export type CoreTargetFieldType =
   | 'jobTitle'
   | 'minRate'
   | 'maxRate'
-  | 'effectiveMonth'
+  | 'effectiveDate'
+  | 'client'
+  | 'reportType'
   | 'category'
   | 'region'
   | 'skillLevel'
@@ -62,7 +81,13 @@ export interface IngestionPreviewData {
   headers: string[];
   rawRows: Record<string, any>[];
   mappings: ColumnMapping[];
-  detectedMonth: string;
+  detectedDate: string;
+  detectedClient?: string;
+  detectedReportType?: string;
+  /** Region bands found in a wide regional report, in file column order. */
+  detectedRegions?: string[];
+  /** Source rows before the regional unpivot expanded them. */
+  sourceRowCount?: number;
   validationErrors: string[];
 }
 
@@ -70,7 +95,9 @@ export interface RateCardFilterState {
   searchTerm: string;
   category: string;
   region: string;
-  selectedMonth: string;
+  selectedDate: string;
+  /** Dashboard-wide client scope. 'ALL' aggregates every client together. */
+  client: string;
 }
 
 export interface RateCardMetricSummary {

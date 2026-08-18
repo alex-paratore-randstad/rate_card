@@ -6,6 +6,7 @@ import {
   RateCardFilterState,
   RateCardMetricSummary,
   FieldDefinition,
+  BatchMeta,
 } from '../types/rateCard';
 import { fetchHistoricalRateCards, saveRateCardsToDomo, fetchBatches, saveBatchToDomo } from '../services/domoService';
 import { fetchFieldDefinitions, addFieldDefinition, removeFieldDefinition } from '../services/fieldService';
@@ -21,7 +22,10 @@ interface RateCardContextType {
   setFilters: React.Dispatch<React.SetStateAction<RateCardFilterState>>;
   metricSummary: RateCardMetricSummary;
   filteredRateCards: RateCardRecord[];
-  ingestNewBatch: (newRecords: RateCardRecord[], sourceFileName: string, effectiveMonth: string) => Promise<boolean>;
+  /** Records narrowed to the selected client only — the scope every dashboard metric uses. */
+  clientScopedRateCards: RateCardRecord[];
+  availableClients: string[];
+  ingestNewBatch: (newRecords: RateCardRecord[], sourceFileName: string, batchMeta: BatchMeta) => Promise<boolean>;
   refreshDataset: () => Promise<void>;
   isLoading: boolean;
   notificationMessage: { type: 'success' | 'error' | 'info'; text: string } | null;
@@ -46,7 +50,8 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     searchTerm: '',
     category: 'ALL',
     region: 'ALL',
-    selectedMonth: 'ALL',
+    selectedDate: 'ALL',
+    client: 'ALL',
   });
 
   const refreshDataset = async () => {
@@ -86,14 +91,16 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const ingestNewBatch = async (
     newRecords: RateCardRecord[],
     sourceFileName: string,
-    effectiveMonth: string
+    batchMeta: BatchMeta
   ): Promise<boolean> => {
     setIsLoading(true);
     try {
       const newBatch: NormalizedIngestionBatch = {
         batchId: `batch-${Date.now()}`,
         sourceFileName,
-        effectiveMonth,
+        effectiveDate: batchMeta.effectiveDate,
+        client: batchMeta.client,
+        reportType: batchMeta.reportType,
         recordCount: newRecords.length,
         records: newRecords,
         status: 'ingested',
@@ -127,9 +134,23 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
-  // Filtered dataset logic
+  // Every distinct client present in the collection. Records migrated from the
+  // pre-client schema carry an empty string; they are grouped under one entry.
+  const availableClients = useMemo(() => {
+    return Array.from(new Set(rateCards.map(r => r.client || ''))).sort();
+  }, [rateCards]);
+
+  // Client scope is applied before anything else. Rate cards from different
+  // clients are not comparable, so averaging across them produces a number that
+  // describes no actual client — every dashboard metric reads from this set.
+  const clientScopedRateCards = useMemo(() => {
+    if (filters.client === 'ALL') return rateCards;
+    return rateCards.filter(record => (record.client || '') === filters.client);
+  }, [rateCards, filters.client]);
+
+  // Table-level filtering, layered on top of the client scope
   const filteredRateCards = useMemo(() => {
-    return rateCards.filter(record => {
+    return clientScopedRateCards.filter(record => {
       const matchesSearch =
         filters.searchTerm === '' ||
         record.jobTitle.toLowerCase().includes(filters.searchTerm.toLowerCase()) ||
@@ -141,16 +162,19 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const matchesRegion =
         filters.region === 'ALL' || record.region === filters.region;
 
-      const matchesMonth =
-        filters.selectedMonth === 'ALL' || record.effectiveMonth === filters.selectedMonth;
+      const matchesDate =
+        filters.selectedDate === 'ALL' || record.effectiveDate === filters.selectedDate;
 
-      return matchesSearch && matchesCategory && matchesRegion && matchesMonth;
+      return matchesSearch && matchesCategory && matchesRegion && matchesDate;
     });
-  }, [rateCards, filters]);
+  }, [clientScopedRateCards, filters]);
 
-  // Aggregate Metrics Computation
+  // Aggregate Metrics Computation — scoped to the selected client, so the
+  // headline figures always describe one client rather than a blend of several.
   const metricSummary = useMemo<RateCardMetricSummary>(() => {
-    if (rateCards.length === 0) {
+    const scoped = clientScopedRateCards;
+
+    if (scoped.length === 0) {
       return {
         totalRoles: 0,
         avgMinRate: 0,
@@ -161,22 +185,23 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       };
     }
 
-    const uniqueRoles = new Set(rateCards.map(r => r.jobTitle.toLowerCase())).size;
-    const totalMin = rateCards.reduce((acc, r) => acc + r.minRate, 0);
-    const totalMax = rateCards.reduce((acc, r) => acc + r.maxRate, 0);
-    const totalSpread = rateCards.reduce((acc, r) => acc + r.rateSpread, 0);
+    const uniqueRoles = new Set(scoped.map(r => r.jobTitle.toLowerCase())).size;
+    const totalMin = scoped.reduce((acc, r) => acc + r.minRate, 0);
+    const totalMax = scoped.reduce((acc, r) => acc + r.maxRate, 0);
+    const totalSpread = scoped.reduce((acc, r) => acc + r.rateSpread, 0);
 
-    const avgMinRate = totalMin / rateCards.length;
-    const avgMaxRate = totalMax / rateCards.length;
-    const avgSpread = totalSpread / rateCards.length;
+    const avgMinRate = totalMin / scoped.length;
+    const avgMaxRate = totalMax / scoped.length;
+    const avgSpread = totalSpread / scoped.length;
 
-    // Estimate month-over-month rate drift between newest month and previous month
-    const months = Array.from(new Set(rateCards.map(r => r.effectiveMonth))).sort().reverse();
-    let monthlyDriftPercentage = 2.4; // Default positive trend baseline
+    // Rate drift between the two most recent effective dates. Keyed on the full
+    // date so two reports landing in the same month compare as distinct periods.
+    const dates = Array.from(new Set(scoped.map(r => r.effectiveDate))).sort().reverse();
+    let monthlyDriftPercentage = 0; // No prior period means no measurable drift
 
-    if (months.length >= 2) {
-      const latestMonthCards = rateCards.filter(r => r.effectiveMonth === months[0]);
-      const prevMonthCards = rateCards.filter(r => r.effectiveMonth === months[1]);
+    if (dates.length >= 2) {
+      const latestMonthCards = scoped.filter(r => r.effectiveDate === dates[0]);
+      const prevMonthCards = scoped.filter(r => r.effectiveDate === dates[1]);
 
       const latestAvg = latestMonthCards.reduce((acc, r) => acc + r.avgRate, 0) / (latestMonthCards.length || 1);
       const prevAvg = prevMonthCards.reduce((acc, r) => acc + r.avgRate, 0) / (prevMonthCards.length || 1);
@@ -192,9 +217,12 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       avgMaxRate,
       avgSpread,
       monthlyDriftPercentage,
-      totalBatchesCount: batches.length,
+      totalBatchesCount:
+        filters.client === 'ALL'
+          ? batches.length
+          : batches.filter(b => (b.client || '') === filters.client).length,
     };
-  }, [rateCards, batches]);
+  }, [clientScopedRateCards, batches, filters.client]);
 
   return (
     <RateCardContext.Provider
@@ -209,6 +237,8 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setFilters,
         metricSummary,
         filteredRateCards,
+        clientScopedRateCards,
+        availableClients,
         ingestNewBatch,
         refreshDataset,
         isLoading,

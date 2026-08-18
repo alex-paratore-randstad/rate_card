@@ -104,7 +104,17 @@ export const FileUploader: React.FC = () => {
         <p style={{ color: '#415E7D', fontSize: '0.9rem', marginBottom: '16px' }}>
           Supports .xlsx, .xls, or .csv monthly report templates
         </p>
-        <button className="btn-primary" type="button" disabled={isParsing}>
+        {/* The dropzone itself opens the picker; stop the bubble so a click on
+            the button does not open it a second time. */}
+        <button
+          className="btn-primary"
+          type="button"
+          disabled={isParsing}
+          onClick={(e) => {
+            e.stopPropagation();
+            fileInputRef.current?.click();
+          }}
+        >
           <FileText size={16} />
           <span>Browse File</span>
         </button>

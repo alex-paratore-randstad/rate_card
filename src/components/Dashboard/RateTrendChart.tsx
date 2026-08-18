@@ -12,7 +12,7 @@ import {
 import { Line } from 'react-chartjs-2';
 import { TrendingUp, Filter } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
-import { formatCurrencyRandstad } from '../../utils/formatters';
+import { formatCurrencyRandstad, formatDateRandstad } from '../../utils/formatters';
 
 ChartJS.register(
   CategoryScale,
@@ -25,61 +25,47 @@ ChartJS.register(
 );
 
 export const RateTrendChart: React.FC = () => {
-  const { rateCards } = useRateCard();
+  const { clientScopedRateCards: rateCards } = useRateCard();
 
   // Extract list of unique job titles for selector
   const availableRoles = useMemo(() => {
     return Array.from(new Set(rateCards.map((r) => r.jobTitle))).sort();
   }, [rateCards]);
 
-  const [selectedRole, setSelectedRole] = useState<string>(
-    availableRoles[0] || 'Senior Full Stack Engineer'
-  );
+  const [selectedRole, setSelectedRole] = useState<string>('');
 
-  // Group monthly trend data for selected role
+  // Rate cards load asynchronously, so the selector's first render sees an empty
+  // list. Derive the shown role instead of latching state onto that empty state.
+  const effectiveRole =
+    selectedRole && availableRoles.includes(selectedRole) ? selectedRole : availableRoles[0] ?? '';
+
+  // Group trend data for the selected role by exact effective date
   const chartData = useMemo(() => {
-    const roleRecords = rateCards
-      .filter((r) => r.jobTitle === selectedRole)
-      .sort((a, b) => a.effectiveMonth.localeCompare(b.effectiveMonth));
+    const roleRecords = rateCards.filter((r) => r.jobTitle === effectiveRole);
+    const dates = Array.from(new Set(roleRecords.map((r) => r.effectiveDate))).sort();
 
-    const months = Array.from(new Set(roleRecords.map((r) => r.effectiveMonth))).sort();
-
-    const minRates = months.map((m) => {
-      const rec = roleRecords.find((r) => r.effectiveMonth === m);
-      return rec ? rec.minRate : null;
-    });
-
-    const maxRates = months.map((m) => {
-      const rec = roleRecords.find((r) => r.effectiveMonth === m);
-      return rec ? rec.maxRate : null;
-    });
-
-    const avgRates = months.map((m) => {
-      const rec = roleRecords.find((r) => r.effectiveMonth === m);
-      return rec ? rec.avgRate : null;
-    });
+    const rateOn = (date: string, pick: (r: (typeof roleRecords)[number]) => number) => {
+      const rec = roleRecords.find((r) => r.effectiveDate === date);
+      return rec ? pick(rec) : null;
+    };
 
     return {
-      labels: months.map((m) => {
-        const [yr, mo] = m.split('-');
-        const dateObj = new Date(parseInt(yr), parseInt(mo) - 1, 1);
-        return dateObj.toLocaleString('en-US', { month: 'short', year: 'numeric' });
-      }),
+      labels: dates.map((d) => formatDateRandstad(d)),
       datasets: [
         {
           label: 'Maximum Pay Rate (USD)',
-          data: maxRates,
-          borderColor: '#255CA9', // Primary Blue
-          backgroundColor: '#255CA9',
+          data: dates.map((d) => rateOn(d, (r) => r.maxRate)),
+          borderColor: '#1A509C', // Line sequence 1
+          backgroundColor: '#1A509C',
           borderWidth: 3,
           pointRadius: 5,
           tension: 0.1,
         },
         {
           label: 'Average Rate (USD)',
-          data: avgRates,
-          borderColor: '#007C82', // Tertiary Teal
-          backgroundColor: '#007C82',
+          data: dates.map((d) => rateOn(d, (r) => r.avgRate)),
+          borderColor: '#258AED', // Line sequence 3
+          backgroundColor: '#258AED',
           borderWidth: 2.5,
           borderDash: [5, 5],
           pointRadius: 4,
@@ -87,16 +73,16 @@ export const RateTrendChart: React.FC = () => {
         },
         {
           label: 'Minimum Pay Rate (USD)',
-          data: minRates,
-          borderColor: '#BAD808', // Lime Accent
-          backgroundColor: '#BAD808',
+          data: dates.map((d) => rateOn(d, (r) => r.minRate)),
+          borderColor: '#BBD900', // Line sequence 2
+          backgroundColor: '#BBD900',
           borderWidth: 3,
           pointRadius: 5,
           tension: 0.1,
         },
       ],
     };
-  }, [rateCards, selectedRole]);
+  }, [rateCards, effectiveRole]);
 
   const options = {
     responsive: true,
@@ -158,7 +144,7 @@ export const RateTrendChart: React.FC = () => {
             <span>Historical Rate Drift & Trend Analysis</span>
           </h2>
           <span className="app-subtitle">
-            Tracking monthly minimum and maximum rate evolution per role
+            Tracking minimum and maximum rate evolution per role by effective date
           </span>
         </div>
 
@@ -170,7 +156,7 @@ export const RateTrendChart: React.FC = () => {
           <select
             className="form-control"
             style={{ width: '260px' }}
-            value={selectedRole}
+            value={effectiveRole}
             onChange={(e) => setSelectedRole(e.target.value)}
           >
             {availableRoles.map((role) => (

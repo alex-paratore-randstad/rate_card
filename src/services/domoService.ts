@@ -1,4 +1,5 @@
 import { RateCardRecord, NormalizedIngestionBatch } from '../types/rateCard';
+import { migrateRecord, migrateBatch } from './migrations';
 
 const COLLECTION_RECORDS = 'rate_card_history';
 const COLLECTION_BATCHES = 'rate_card_batches';
@@ -27,7 +28,7 @@ export const fetchHistoricalRateCards = async (): Promise<RateCardRecord[]> => {
   if (isDomoEnvironment()) {
     try {
       const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`);
-      const records = unwrapDocuments<RateCardRecord>(docs);
+      const records = unwrapDocuments<any>(docs).map(migrateRecord);
       if (records.length > 0) return records;
     } catch (error) {
       console.warn('[Domo Collections] Error fetching rate card records, using local fallback:', error);
@@ -38,7 +39,7 @@ export const fetchHistoricalRateCards = async (): Promise<RateCardRecord[]> => {
   const localData = localStorage.getItem('randstad_rate_cards');
   if (localData) {
     try {
-      return JSON.parse(localData) as RateCardRecord[];
+      return (JSON.parse(localData) as any[]).map(migrateRecord);
     } catch {
       // ignore parse errors
     }
@@ -86,7 +87,7 @@ export const fetchBatches = async (): Promise<NormalizedIngestionBatch[]> => {
   if (isDomoEnvironment()) {
     try {
       const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`);
-      const batches = unwrapDocuments<NormalizedIngestionBatch>(docs);
+      const batches = unwrapDocuments<any>(docs).map(migrateBatch);
       if (batches.length > 0) return batches;
     } catch (error) {
       console.warn('[Domo Collections] Error fetching batches, using local fallback:', error);
@@ -96,7 +97,7 @@ export const fetchBatches = async (): Promise<NormalizedIngestionBatch[]> => {
   const localData = localStorage.getItem('randstad_batches');
   if (localData) {
     try {
-      return JSON.parse(localData) as NormalizedIngestionBatch[];
+      return (JSON.parse(localData) as any[]).map(migrateBatch);
     } catch {
       // ignore
     }

@@ -2,8 +2,11 @@ import React from 'react';
 import { RateCardProvider, useRateCard } from './context/RateCardContext';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
+import { ClientScopeBar } from './components/Dashboard/ClientScopeBar';
 import { KPICards } from './components/Dashboard/KPICards';
 import { RateTrendChart } from './components/Dashboard/RateTrendChart';
+import { RegionalRateHeatmap } from './components/Dashboard/RegionalRateHeatmap';
+import { RegionalUpliftSummary } from './components/Dashboard/RegionalUpliftSummary';
 import { RateSpreadTable } from './components/Dashboard/RateSpreadTable';
 import { PeriodComparison } from './components/Dashboard/PeriodComparison';
 import { FileUploader } from './components/Ingestion/FileUploader';
@@ -60,8 +63,11 @@ const MainLayout: React.FC = () => {
 
         {activeTab === 'dashboard' && (
           <>
+            <ClientScopeBar />
             <KPICards />
             <RateTrendChart />
+            <RegionalRateHeatmap />
+            <RegionalUpliftSummary />
             <RateSpreadTable />
             <PeriodComparison />
           </>
