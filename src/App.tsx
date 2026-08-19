@@ -3,12 +3,7 @@ import { RateCardProvider, useRateCard } from './context/RateCardContext';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
 import { ClientScopeBar } from './components/Dashboard/ClientScopeBar';
-import { KPICards } from './components/Dashboard/KPICards';
-import { RateTrendChart } from './components/Dashboard/RateTrendChart';
-import { RegionalRateHeatmap } from './components/Dashboard/RegionalRateHeatmap';
-import { RegionalUpliftSummary } from './components/Dashboard/RegionalUpliftSummary';
-import { RateSpreadTable } from './components/Dashboard/RateSpreadTable';
-import { PeriodComparison } from './components/Dashboard/PeriodComparison';
+import { PayVarianceTable } from './components/Dashboard/PayVarianceTable';
 import { FileUploader } from './components/Ingestion/FileUploader';
 import { ColumnMappingModal } from './components/Ingestion/ColumnMappingModal';
 import { DatasetViewer } from './components/Collection/DatasetViewer';
@@ -61,15 +56,13 @@ const MainLayout: React.FC = () => {
 
         <Navigation />
 
+        {/* Reporting is scoped to the pay variance view for now. The other
+            dashboard cards are unmounted rather than deleted — their components
+            are still in src/components/Dashboard if they are wanted back. */}
         {activeTab === 'dashboard' && (
           <>
             <ClientScopeBar />
-            <KPICards />
-            <RateTrendChart />
-            <RegionalRateHeatmap />
-            <RegionalUpliftSummary />
-            <RateSpreadTable />
-            <PeriodComparison />
+            <PayVarianceTable />
           </>
         )}
 
