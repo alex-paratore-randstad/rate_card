@@ -1,72 +1,66 @@
+/**
+ * One job title's pay range for one rate year, from one upload.
+ *
+ * The rate year comes from the column header (e.g. "Max Pay - National Average
+ * (2026)"), which is what variance compares. `uploadedAt` records when the file
+ * landed — not part of the data's identity, but it is how a later re-upload of
+ * the same year can be seen to have moved.
+ */
 export interface RateCardRecord {
   id: string;
+  /** Which upload produced this record; makes "latest upload per year" exact. */
+  batchId: string;
   jobTitle: string;
+  laborType?: string;
   minRate: number;
   maxRate: number;
   avgRate: number;
   rateSpread: number;
-  effectiveDate: string; // Exact effective date, "YYYY-MM-DD"
-  client?: string;       // Client / account the report belongs to
-  reportType?: string;   // Report type or name, for tracking a recurring report over time
-  category?: string;
-  region?: string;
-  /**
-   * Zero-based position of the region band in the source file, so a pricing
-   * ladder (Base, Mid, Premium) keeps its order in reports. Averages cannot be
-   * used to infer this: a role missing from one tier skews that tier's mean.
-   */
-  regionOrder?: number;
-  skillLevel?: string;
-  laborType?: string;
-  currency: string;
+  /** "2025" — parsed from the column header, not from a date column. */
+  rateYear: string;
+  client?: string;
+  country?: string;
   sourceFileName?: string;
-  ingestionDate: string;
-  customFields?: Record<string, string | number>; // User-defined fields captured at upload
+  /** ISO timestamp of the upload. */
+  uploadedAt: string;
 }
 
 export interface NormalizedIngestionBatch {
   batchId: string;
   sourceFileName: string;
-  effectiveDate: string;
+  /** Every rate year this upload carried, in file column order. */
+  rateYears: string[];
   client?: string;
-  reportType?: string;
+  country?: string;
   recordCount: number;
-  records: RateCardRecord[];
-  status: 'validated' | 'ingested' | 'failed';
-  ingestionTimestamp: string;
+  /** How many records Domo actually confirmed, which can be fewer. */
+  savedCount: number;
+  status: 'ingested' | 'partial' | 'failed';
+  /** Where the records went. A local save must never be labelled as Domo. */
+  target: 'domo' | 'local';
+  statusMessage: string;
+  uploadedAt: string;
 }
 
 /** Batch-level tags applied to every row of an upload. */
 export interface BatchMeta {
-  effectiveDate: string;
   client: string;
-  reportType: string;
+  country: string;
 }
 
-/** A user-defined mappable field that appears in the column mapping dropdown */
-export interface FieldDefinition {
-  key: string;   // Unique identifier e.g. "site", "mra_min_bill_rate"
-  label: string; // Display label e.g. "Site", "MRA Min Suggested Bill Rate"
-  fieldType: 'text' | 'number';
-}
-
-// Core hardcoded field types that drive analytics
+// Fields a source column can be mapped onto. The rate year is not mapped by the
+// user — it is derived from the header text during the year unpivot.
 export type CoreTargetFieldType =
   | 'jobTitle'
+  | 'laborType'
   | 'minRate'
   | 'maxRate'
-  | 'effectiveDate'
+  | 'rateYear'
   | 'client'
-  | 'reportType'
-  | 'category'
-  | 'region'
-  | 'skillLevel'
-  | 'laborType'
-  | 'currency'
+  | 'country'
   | 'ignore';
 
-// Dynamic custom field keys are prefixed with "custom:" e.g. "custom:site"
-export type TargetFieldType = CoreTargetFieldType | `custom:${string}`;
+export type TargetFieldType = CoreTargetFieldType;
 
 export interface ColumnMapping {
   rawHeader: string;
@@ -81,30 +75,18 @@ export interface IngestionPreviewData {
   headers: string[];
   rawRows: Record<string, any>[];
   mappings: ColumnMapping[];
-  detectedDate: string;
+  /** Rate years found in the column headers, in file column order. */
+  detectedYears?: string[];
   detectedClient?: string;
-  detectedReportType?: string;
-  /** Region bands found in a wide regional report, in file column order. */
-  detectedRegions?: string[];
-  /** Source rows before the regional unpivot expanded them. */
+  detectedCountry?: string;
+  /** Source rows before the year unpivot expanded them. */
   sourceRowCount?: number;
   validationErrors: string[];
 }
 
 export interface RateCardFilterState {
-  searchTerm: string;
-  category: string;
-  region: string;
-  selectedDate: string;
-  /** Dashboard-wide client scope. 'ALL' aggregates every client together. */
+  /** Dashboard-wide scope. 'ALL' aggregates every client together. */
   client: string;
-}
-
-export interface RateCardMetricSummary {
-  totalRoles: number;
-  avgMinRate: number;
-  avgMaxRate: number;
-  avgSpread: number;
-  monthlyDriftPercentage: number;
-  totalBatchesCount: number;
+  /** Rates from different countries are not comparable; scope before reporting. */
+  country: string;
 }

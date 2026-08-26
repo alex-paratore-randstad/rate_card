@@ -1,36 +1,63 @@
 import React, { useState } from 'react';
 import { Database, Download, History, FileSpreadsheet } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
-import { formatCurrencyRandstad, formatDateRandstad } from '../../utils/formatters';
+import { formatDateRandstad } from '../../utils/formatters';
+
+const money = (amount: number): string => `$${amount.toFixed(2)}`;
+
+/**
+ * The label names the destination, not just the outcome. A local development
+ * save satisfies the same record counts as a Domo write, so counting alone
+ * would report "Saved to Domo" for data that never left the browser.
+ */
+const statusPill = (
+  status: string,
+  target: string
+): { className: string; label: string } => {
+  if (status === 'failed') return { className: 'error', label: 'Save failed' };
+  if (target === 'local') {
+    return { className: 'info', label: 'Local dev only' };
+  }
+  if (status === 'partial') return { className: 'warning', label: 'Partially saved' };
+  return { className: 'success', label: 'Saved to Domo' };
+};
 
 export const DatasetViewer: React.FC = () => {
-  const { rateCards, batches } = useRateCard();
+  const { rateCards, currentRateCards, batches } = useRateCard();
   const [activeSubTab, setActiveSubTab] = useState<'records' | 'batches'>('records');
+
+  /** Records not in the newest upload of their year are kept as history. */
+  const currentIds = new Set(currentRateCards.map((r) => r.id));
 
   const exportCSV = () => {
     if (rateCards.length === 0) return;
-    const headers = ['ID', 'Job Title', 'Min Rate', 'Max Rate', 'Rate Spread', 'Effective Date', 'Client', 'Report Type', 'Category', 'Region', 'Source File'];
+    const headers = [
+      'ID', 'Batch ID', 'Job Title', 'Labor Type', 'Min Pay', 'Max Pay', 'Spread',
+      'Rate Year', 'Client', 'Country', 'Source File', 'Uploaded At', 'Superseded',
+    ];
     const quote = (value?: string) => `"${(value || '').replace(/"/g, '""')}"`;
-    const rows = rateCards.map(r => [
+    const rows = rateCards.map((r) => [
       r.id,
+      r.batchId,
       quote(r.jobTitle),
+      quote(r.laborType),
       r.minRate,
       r.maxRate,
       r.rateSpread,
-      r.effectiveDate,
+      r.rateYear,
       quote(r.client),
-      quote(r.reportType),
-      quote(r.category),
-      quote(r.region),
-      quote(r.sourceFileName)
+      quote(r.country),
+      quote(r.sourceFileName),
+      r.uploadedAt,
+      currentIds.has(r.id) ? 'No' : 'Yes',
     ]);
 
-    const csvString = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+    const csvString = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `Randstad_Domo_Rate_Card_Collection_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `Randstad_Rate_Card_Collection_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -42,10 +69,10 @@ export const DatasetViewer: React.FC = () => {
         <div>
           <h2>Domo Collection Dataset Management</h2>
           <span className="app-subtitle">
-            Dataset Alias: <code>rate_card_history</code> ({rateCards.length} Total Historical Entries)
+            Collection: <code>rate_card_history</code> ({rateCards.length} total records,{' '}
+            {currentRateCards.length} current)
           </span>
         </div>
-
         <div style={{ display: 'flex', gap: '10px' }}>
           <button className="btn-secondary" onClick={exportCSV}>
             <Download size={16} />
@@ -54,22 +81,20 @@ export const DatasetViewer: React.FC = () => {
         </div>
       </div>
 
-      {/* Sub tabs: All Normalized Records vs Ingestion Batch History */}
       <div className="navigation-tabs" style={{ marginBottom: '20px', maxWidth: '400px' }}>
         <button
           className={`nav-tab-button ${activeSubTab === 'records' ? 'active' : ''}`}
           onClick={() => setActiveSubTab('records')}
         >
           <Database size={16} />
-          <span>Historical Records ({rateCards.length})</span>
+          <span>Records ({rateCards.length})</span>
         </button>
-
         <button
           className={`nav-tab-button ${activeSubTab === 'batches' ? 'active' : ''}`}
           onClick={() => setActiveSubTab('batches')}
         >
           <History size={16} />
-          <span>Batch Audit Log ({batches.length})</span>
+          <span>Upload History ({batches.length})</span>
         </button>
       </div>
 
@@ -78,43 +103,56 @@ export const DatasetViewer: React.FC = () => {
           <table className="randstad-table">
             <thead>
               <tr>
-                <th>Record ID</th>
-                <th>Job Title / Role</th>
-                <th>Min Rate</th>
-                <th>Max Rate</th>
-                <th>Effective Date</th>
+                <th>Job Title</th>
+                <th>Labor Type</th>
+                <th style={{ textAlign: 'right' }}>Min Pay</th>
+                <th style={{ textAlign: 'right' }}>Max Pay</th>
+                <th style={{ textAlign: 'right' }}>Spread</th>
+                <th>Rate Year</th>
                 <th>Client</th>
-                <th>Report Type</th>
-                <th>Category</th>
-                <th>Source File</th>
-                <th>Ingested Date</th>
+                <th>Country</th>
+                <th>Uploaded</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              {rateCards.map((record) => (
-                <tr key={record.id}>
-                  <td style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#677E95' }}>
-                    {record.id.slice(0, 16)}...
+              {rateCards.length === 0 ? (
+                <tr>
+                  <td colSpan={10} style={{ textAlign: 'center', padding: '32px', color: '#415E7D' }}>
+                    No records yet.
                   </td>
-                  <td style={{ fontWeight: 600 }}>{record.jobTitle}</td>
-                  <td style={{ color: '#257F56', fontWeight: 600 }}>
-                    {formatCurrencyRandstad(record.minRate, record.currency)}
-                  </td>
-                  <td style={{ color: '#255CA9', fontWeight: 600 }}>
-                    {formatCurrencyRandstad(record.maxRate, record.currency)}
-                  </td>
-                  <td>{formatDateRandstad(record.effectiveDate)}</td>
-                  <td>{record.client || '—'}</td>
-                  <td style={{ fontSize: '0.85rem' }}>{record.reportType || '—'}</td>
-                  <td>
-                    <span className="status-pill info">{record.category || 'General'}</span>
-                  </td>
-                  <td style={{ fontSize: '0.8rem', color: '#415E7D' }}>
-                    {record.sourceFileName || 'Domo Sync'}
-                  </td>
-                  <td style={{ fontSize: '0.8rem' }}>{formatDateRandstad(record.ingestionDate)}</td>
                 </tr>
-              ))}
+              ) : (
+                rateCards.map((record) => {
+                  const isCurrent = currentIds.has(record.id);
+                  return (
+                    <tr key={record.id} style={{ opacity: isCurrent ? 1 : 0.55 }}>
+                      <td style={{ fontWeight: 600 }}>{record.jobTitle}</td>
+                      <td>{record.laborType || '—'}</td>
+                      <td style={{ textAlign: 'right', color: '#257F56', fontWeight: 600 }}>
+                        {money(record.minRate)}
+                      </td>
+                      <td style={{ textAlign: 'right', color: '#255CA9', fontWeight: 600 }}>
+                        {money(record.maxRate)}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>{money(record.rateSpread)}</td>
+                      <td style={{ fontWeight: 600 }}>{record.rateYear}</td>
+                      <td>{record.client || '—'}</td>
+                      <td>{record.country || '—'}</td>
+                      <td style={{ fontSize: '0.8rem' }}>
+                        {formatDateRandstad(record.uploadedAt.slice(0, 10))}
+                      </td>
+                      <td>
+                        {/* Superseded rows stay visible: this is the history that
+                            answers "how did 2026 change between uploads". */}
+                        <span className={`status-pill ${isCurrent ? 'success' : 'info'}`}>
+                          {isCurrent ? 'Current' : 'Superseded'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -123,36 +161,52 @@ export const DatasetViewer: React.FC = () => {
           <table className="randstad-table">
             <thead>
               <tr>
-                <th>Batch ID</th>
-                <th>Source Report File</th>
-                <th>Effective Date</th>
+                <th>Source File</th>
+                <th>Rate Years</th>
                 <th>Client</th>
-                <th>Report Type</th>
-                <th>Records Ingested</th>
-                <th>Ingestion Timestamp</th>
+                <th>Country</th>
+                <th style={{ textAlign: 'right' }}>Records</th>
+                <th>Uploaded</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              {batches.map((batch) => (
-                <tr key={batch.batchId}>
-                  <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{batch.batchId}</td>
-                  <td style={{ fontWeight: 600 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <FileSpreadsheet size={16} color="#255CA9" />
-                      <span>{batch.sourceFileName}</span>
-                    </div>
-                  </td>
-                  <td>{formatDateRandstad(batch.effectiveDate)}</td>
-                  <td>{batch.client || '—'}</td>
-                  <td style={{ fontSize: '0.85rem' }}>{batch.reportType || '—'}</td>
-                  <td style={{ fontWeight: 600 }}>{batch.recordCount} rows</td>
-                  <td style={{ fontSize: '0.85rem' }}>{batch.ingestionTimestamp}</td>
-                  <td>
-                    <span className="status-pill success">Published to Domo</span>
+              {batches.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: 'center', padding: '32px', color: '#415E7D' }}>
+                    No uploads yet.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                batches.map((batch) => {
+                  const pill = statusPill(batch.status, batch.target);
+                  return (
+                    <tr key={batch.batchId}>
+                      <td style={{ fontWeight: 600 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <FileSpreadsheet size={16} color="#255CA9" />
+                          <span>{batch.sourceFileName}</span>
+                        </div>
+                      </td>
+                      <td>{batch.rateYears.join(', ')}</td>
+                      <td>{batch.client || '—'}</td>
+                      <td>{batch.country || '—'}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600 }}>
+                        {batch.savedCount} / {batch.recordCount}
+                      </td>
+                      <td style={{ fontSize: '0.85rem' }}>
+                        {formatDateRandstad(batch.uploadedAt.slice(0, 10))}
+                      </td>
+                      <td>
+                        {/* Reflects what actually reached Domo. */}
+                        <span className={`status-pill ${pill.className}`} title={batch.statusMessage}>
+                          {pill.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>

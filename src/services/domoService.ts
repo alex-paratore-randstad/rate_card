@@ -1,24 +1,63 @@
 import { RateCardRecord, NormalizedIngestionBatch } from '../types/rateCard';
-import { migrateRecord, migrateBatch } from './migrations';
 
 const COLLECTION_RECORDS = 'rate_card_history';
 const COLLECTION_BATCHES = 'rate_card_batches';
-
 const COLLECTIONS_BASE = '/domo/datastores/v1/collections';
 
-export const isDomoEnvironment = (): boolean => {
-  return typeof window !== 'undefined' && !!window.domo && typeof window.domo.get === 'function';
-};
+const LOCAL_RECORDS_KEY = 'randstad_rate_cards';
+const LOCAL_BATCHES_KEY = 'randstad_batches';
+
+/** How many collection writes to keep in flight at once. */
+const WRITE_CONCURRENCY = 25;
+
+export const isDomoEnvironment = (): boolean =>
+  typeof window !== 'undefined' && !!window.domo && typeof window.domo.get === 'function';
+
+export interface SaveResult {
+  success: boolean;
+  savedCount: number;
+  attemptedCount: number;
+  /** Where the data actually landed — never claim Domo when it was the browser. */
+  target: 'domo' | 'local';
+  message: string;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Unwrap Domo collection documents — each document has an `id` and `content` field. */
+/** Unwrap Domo collection documents — each has an `id` and a `content` field. */
 function unwrapDocuments<T>(docs: any[]): T[] {
   if (!Array.isArray(docs)) return [];
   return docs.map((doc) => (doc.content !== undefined ? doc.content : doc)) as T[];
 }
+
+/**
+ * Run `fn` over `items` with a bounded number in flight, returning how many
+ * succeeded. Unlike a bare `Promise.all`, one rejection does not discard the
+ * rest — a partial write is reported honestly rather than as total failure.
+ */
+async function writeInChunks<T>(
+  items: T[],
+  fn: (item: T) => Promise<unknown>,
+  size = WRITE_CONCURRENCY
+): Promise<number> {
+  let saved = 0;
+  for (let i = 0; i < items.length; i += size) {
+    const slice = items.slice(i, i + size);
+    const results = await Promise.allSettled(slice.map(fn));
+    saved += results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length) {
+      console.warn(`[Domo Collections] ${failed.length} write(s) failed in this chunk`, failed[0]);
+    }
+  }
+  return saved;
+}
+
+/** A stored document from an older schema has no rateYear and cannot be shown. */
+const isCurrentSchema = (record: any): boolean =>
+  !!record && typeof record.rateYear === 'string' && record.rateYear !== '';
 
 // ---------------------------------------------------------------------------
 // Rate Card Records
@@ -28,54 +67,89 @@ export const fetchHistoricalRateCards = async (): Promise<RateCardRecord[]> => {
   if (isDomoEnvironment()) {
     try {
       const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`);
-      const records = unwrapDocuments<any>(docs).map(migrateRecord);
-      if (records.length > 0) return records;
+      const all = unwrapDocuments<any>(docs);
+      const current = all.filter(isCurrentSchema);
+      if (current.length < all.length) {
+        console.warn(
+          `[Domo Collections] Skipped ${all.length - current.length} record(s) from an older schema.`
+        );
+      }
+      return current as RateCardRecord[];
     } catch (error) {
-      console.warn('[Domo Collections] Error fetching rate card records, using local fallback:', error);
+      console.error('[Domo Collections] Failed to fetch rate card records:', error);
+      throw error; // Surface it; do not silently fall back to browser storage.
     }
   }
 
-  // Local storage fallback (dev / outside Domo)
-  const localData = localStorage.getItem('randstad_rate_cards');
+  // Local development only — window.domo does not exist outside the Domo host.
+  const localData = localStorage.getItem(LOCAL_RECORDS_KEY);
   if (localData) {
     try {
-      return (JSON.parse(localData) as any[]).map(migrateRecord);
+      return (JSON.parse(localData) as any[]).filter(isCurrentSchema) as RateCardRecord[];
     } catch {
       // ignore parse errors
     }
   }
-
-  return []; // Always start empty — history is built from uploads
+  return [];
 };
 
 export const saveRateCardsToDomo = async (
-  newRecords: RateCardRecord[]
-): Promise<{ success: boolean; message: string }> => {
+  newRecords: RateCardRecord[],
+  batchId: string
+): Promise<SaveResult> => {
+  const attemptedCount = newRecords.length;
+
   if (isDomoEnvironment()) {
+    const savedCount = await writeInChunks(newRecords, (record) =>
+      window.domo.post(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`, record)
+    );
+
+    // Read back so the confirmation reflects what Domo holds, not what was sent.
+    let confirmed = savedCount;
     try {
-      // POST each record as a separate Collection document
-      await Promise.all(
-        newRecords.map((record) =>
-          window.domo.post(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`, record)
-        )
-      );
-      return {
-        success: true,
-        message: `Saved ${newRecords.length} rate card records to Domo.`,
-      };
-    } catch (error: any) {
-      console.warn('[Domo Collections] Error saving records:', error);
-      // Fall through to local storage fallback
+      const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`);
+      confirmed = unwrapDocuments<any>(docs).filter((r) => r?.batchId === batchId).length;
+    } catch (error) {
+      console.warn('[Domo Collections] Could not verify the write by read-back:', error);
     }
+
+    if (confirmed === 0) {
+      return {
+        success: false,
+        savedCount: 0,
+        attemptedCount,
+        target: 'domo',
+        message: `Failed to save any of ${attemptedCount} records to Domo. Nothing was stored — check the browser console and the app's collection permissions.`,
+      };
+    }
+    if (confirmed < attemptedCount) {
+      return {
+        success: false,
+        savedCount: confirmed,
+        attemptedCount,
+        target: 'domo',
+        message: `Partial save: only ${confirmed} of ${attemptedCount} records reached Domo.`,
+      };
+    }
+    return {
+      success: true,
+      savedCount: confirmed,
+      attemptedCount,
+      target: 'domo',
+      message: `Saved ${confirmed} records to the Domo collection.`,
+    };
   }
 
-  // Local storage fallback
+  // Outside Domo. This is developer convenience, and the message says so — it
+  // must never read as a successful save to Domo.
   const existing = await fetchHistoricalRateCards();
-  const updated = [...newRecords, ...existing];
-  localStorage.setItem('randstad_rate_cards', JSON.stringify(updated));
+  localStorage.setItem(LOCAL_RECORDS_KEY, JSON.stringify([...newRecords, ...existing]));
   return {
     success: true,
-    message: `Saved ${newRecords.length} records locally (Local Fallback Mode).`,
+    savedCount: attemptedCount,
+    attemptedCount,
+    target: 'local',
+    message: `Stored ${attemptedCount} records in local development storage. Nothing was sent to Domo — publish the app to write to the collection.`,
   };
 };
 
@@ -87,38 +161,40 @@ export const fetchBatches = async (): Promise<NormalizedIngestionBatch[]> => {
   if (isDomoEnvironment()) {
     try {
       const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`);
-      const batches = unwrapDocuments<any>(docs).map(migrateBatch);
-      if (batches.length > 0) return batches;
+      return unwrapDocuments<any>(docs).filter(
+        (b) => b && Array.isArray(b.rateYears)
+      ) as NormalizedIngestionBatch[];
     } catch (error) {
-      console.warn('[Domo Collections] Error fetching batches, using local fallback:', error);
+      console.error('[Domo Collections] Failed to fetch batches:', error);
+      throw error;
     }
   }
 
-  const localData = localStorage.getItem('randstad_batches');
+  const localData = localStorage.getItem(LOCAL_BATCHES_KEY);
   if (localData) {
     try {
-      return (JSON.parse(localData) as any[]).map(migrateBatch);
+      return (JSON.parse(localData) as any[]).filter(
+        (b) => b && Array.isArray(b.rateYears)
+      ) as NormalizedIngestionBatch[];
     } catch {
       // ignore
     }
   }
-
-  return []; // No mock data — start clean
+  return [];
 };
 
-export const saveBatchToDomo = async (
-  batch: NormalizedIngestionBatch
-): Promise<void> => {
+export const saveBatchToDomo = async (batch: NormalizedIngestionBatch): Promise<void> => {
   if (isDomoEnvironment()) {
     try {
       await window.domo.post(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`, batch);
-      return;
     } catch (error) {
-      console.warn('[Domo Collections] Error saving batch:', error);
+      // The audit entry failing is worth knowing about, but the records are the
+      // payload — do not fail the whole ingestion over the log line.
+      console.error('[Domo Collections] Failed to save the batch audit entry:', error);
     }
+    return;
   }
 
-  // Local storage fallback
   const existing = await fetchBatches();
-  localStorage.setItem('randstad_batches', JSON.stringify([batch, ...existing]));
+  localStorage.setItem(LOCAL_BATCHES_KEY, JSON.stringify([batch, ...existing]));
 };

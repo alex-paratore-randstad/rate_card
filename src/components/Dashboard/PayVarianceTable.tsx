@@ -39,16 +39,27 @@ interface VarianceRow {
 }
 
 export const PayVarianceTable: React.FC = () => {
-  const { clientScopedRateCards } = useRateCard();
+  const { scopedRateCards } = useRateCard();
 
   const [basePeriod, setBasePeriod] = useState<string>('');
   const [targetPeriod, setTargetPeriod] = useState<string>('');
   const [search, setSearch] = useState<string>('');
 
+  // Rate years, newest first. The year comes from the column header, not a date.
   const periods = useMemo(
-    () => Array.from(new Set(clientScopedRateCards.map((r) => r.effectiveDate))).sort().reverse(),
-    [clientScopedRateCards]
+    () => Array.from(new Set(scopedRateCards.map((r) => r.rateYear))).sort().reverse(),
+    [scopedRateCards]
   );
+
+  /** When each year was last uploaded — shown so a re-upload is visible. */
+  const uploadedByYear = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of scopedRateCards) {
+      const seen = map.get(r.rateYear);
+      if (!seen || r.uploadedAt > seen) map.set(r.rateYear, r.uploadedAt);
+    }
+    return map;
+  }, [scopedRateCards]);
 
   // Derived rather than latched: records arrive asynchronously, so seeding
   // useState from this list would pin whatever was present on first render.
@@ -62,13 +73,13 @@ export const PayVarianceTable: React.FC = () => {
      * records in a period (one per region, for instance), so rates are averaged
      * within the key rather than picking an arbitrary first match.
      */
-    const collect = (date: string) => {
+    const collect = (year: string) => {
       const acc = new Map<
         string,
         { jobTitle: string; laborType: string; minSum: number; maxSum: number; count: number }
       >();
-      for (const r of clientScopedRateCards) {
-        if (r.effectiveDate !== date) continue;
+      for (const r of scopedRateCards) {
+        if (r.rateYear !== year) continue;
         const laborType = r.laborType || '';
         const key = `${r.jobTitle}||${laborType}`;
         const entry =
@@ -120,9 +131,13 @@ export const PayVarianceTable: React.FC = () => {
 
     filtered.sort((a, b) => a.jobTitle.localeCompare(b.jobTitle, undefined, { numeric: true }));
     return { rows: filtered, aggregated: collapsed };
-  }, [clientScopedRateCards, effectiveBase, effectiveTarget, search]);
+  }, [scopedRateCards, effectiveBase, effectiveTarget, search]);
 
-  const currency = clientScopedRateCards[0]?.currency ?? 'USD';
+  /** "2026 · uploaded 19 August 2026" — the tracked upload date, made visible. */
+  const uploadLabel = (year: string): string => {
+    const at = uploadedByYear.get(year);
+    return at ? `${year} · uploaded ${formatDateRandstad(at.slice(0, 10))}` : year;
+  };
 
   if (periods.length < 2) {
     return (
@@ -142,7 +157,7 @@ export const PayVarianceTable: React.FC = () => {
           <span className="text-meta">
             {periods.length === 0
               ? 'No rate card data yet — ingest a report to get started.'
-              : 'Only one reporting date is loaded. Ingest a second report to compare against it.'}
+              : 'Only one rate year is loaded. Ingest a file carrying a second year to compare against it.'}
           </span>
         </div>
       </div>
@@ -158,8 +173,8 @@ export const PayVarianceTable: React.FC = () => {
             <span>Pay Rate Variance</span>
           </h2>
           <span className="app-subtitle">
-            {rows.length} roles · variance measured on max pay, {currency} · a negative variance is
-            a rate decrease
+            {rows.length} roles · variance measured on max pay, USD · a negative variance is a rate
+            decrease
           </span>
           {aggregated && (
             <div style={{ marginTop: '6px' }}>
@@ -183,7 +198,7 @@ export const PayVarianceTable: React.FC = () => {
             />
           </div>
           <div>
-            <label className="form-label">Base Report:</label>
+            <label className="form-label">Base Year:</label>
             <select
               className="form-control"
               style={{ width: '170px' }}
@@ -191,12 +206,12 @@ export const PayVarianceTable: React.FC = () => {
               onChange={(e) => setBasePeriod(e.target.value)}
             >
               {periods.map((p) => (
-                <option key={`pvb-${p}`} value={p}>{formatDateRandstad(p)}</option>
+                <option key={`pvb-${p}`} value={p}>{p}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="form-label">Comparison Report:</label>
+            <label className="form-label">Comparison Year:</label>
             <select
               className="form-control"
               style={{ width: '170px' }}
@@ -204,7 +219,7 @@ export const PayVarianceTable: React.FC = () => {
               onChange={(e) => setTargetPeriod(e.target.value)}
             >
               {periods.map((p) => (
-                <option key={`pvt-${p}`} value={p}>{formatDateRandstad(p)}</option>
+                <option key={`pvt-${p}`} value={p}>{p}</option>
               ))}
             </select>
           </div>
@@ -221,19 +236,19 @@ export const PayVarianceTable: React.FC = () => {
                   labelled with its own date rather than repeating the header. */}
               <th style={{ textAlign: 'right' }}>
                 Min Pay
-                <div className="text-meta">{formatDateRandstad(effectiveBase)}</div>
+                <div className="text-meta">{uploadLabel(effectiveBase)}</div>
               </th>
               <th style={{ textAlign: 'right' }}>
                 Max Pay
-                <div className="text-meta">{formatDateRandstad(effectiveBase)}</div>
+                <div className="text-meta">{uploadLabel(effectiveBase)}</div>
               </th>
               <th style={{ textAlign: 'right' }}>
                 Min Pay
-                <div className="text-meta">{formatDateRandstad(effectiveTarget)}</div>
+                <div className="text-meta">{uploadLabel(effectiveTarget)}</div>
               </th>
               <th style={{ textAlign: 'right' }}>
                 Max Pay
-                <div className="text-meta">{formatDateRandstad(effectiveTarget)}</div>
+                <div className="text-meta">{uploadLabel(effectiveTarget)}</div>
               </th>
               <th style={{ textAlign: 'right' }}>Variance</th>
             </tr>
