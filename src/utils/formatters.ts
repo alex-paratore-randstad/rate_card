@@ -87,3 +87,11 @@ export const formatOxfordList = (items: string[]): string => {
   if (items.length === 2) return `${items[0]} and ${items[1]}`;
   return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
 };
+
+/**
+ * Timestamp in the form Domo's AppDB dataset sync accepts for a DATETIME
+ * column: "YYYY-MM-DDTHH:MM:SSZ". toISOString() adds milliseconds, which the
+ * sync rejects, so they are trimmed.
+ */
+export const toDomoDateTime = (date: Date = new Date()): string =>
+  date.toISOString().replace(/\.\d{3}Z$/, 'Z');

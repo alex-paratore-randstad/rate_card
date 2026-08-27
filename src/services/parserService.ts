@@ -562,8 +562,10 @@ export const normalizeRawData = (
     const rawYear = getMappedValue(row, 'rateYear');
     const rateYear = rawYear ? String(rawYear).trim() : fallbackYear;
 
+    // Always a string, never undefined: JSON.stringify drops undefined keys and
+    // the AppDB dataset sync expects every declared column on every document.
     const rawLaborType = getMappedValue(row, 'laborType');
-    const laborType = rawLaborType ? String(rawLaborType).trim() : undefined;
+    const laborType = rawLaborType ? String(rawLaborType).trim() : '';
 
     /**
      * Most specific wins: a value in the row's own column, then the per-tab
@@ -596,7 +598,7 @@ export const normalizeRawData = (
       client,
       country,
       sourceFileName: previewData.fileName,
-      sourceSheet: sourceSheet ? String(sourceSheet) : undefined,
+      sourceSheet: sourceSheet ? String(sourceSheet) : '',
       uploadedAt,
     };
   });

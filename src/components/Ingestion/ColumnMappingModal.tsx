@@ -3,7 +3,7 @@ import { CheckCircle2, HelpCircle, ShieldCheck } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
 import { ColumnMapping, TargetFieldType, IngestionPreviewData } from '../../types/rateCard';
 import { normalizeRawData } from '../../services/parserService';
-import { formatDateRandstad } from '../../utils/formatters';
+import { formatDateRandstad, toDomoDateTime } from '../../utils/formatters';
 
 const CORE_OPTIONS: { value: TargetFieldType; label: string }[] = [
   { value: 'jobTitle',  label: 'Job Title' },
@@ -56,7 +56,7 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
   const handleConfirmIngestion = async () => {
     if (!canConfirm) return;
     const batchId = `batch-${Date.now()}`;
-    const uploadedAt = new Date().toISOString();
+    const uploadedAt = toDomoDateTime();
     const batchMeta = { client: client.trim(), country: country.trim() };
 
     const records = normalizeRawData(previewData, mappings, batchMeta, batchId, uploadedAt);

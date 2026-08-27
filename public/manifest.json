@@ -6,9 +6,31 @@
     "height": 8
   },
   "collections": [
-    { "name": "rate_card_history" },
-    { "name": "rate_card_batches" },
-    { "name": "field_definitions" }
+    {
+      "name": "rate_card_history",
+      "schema": {
+        "columns": [
+          { "name": "id", "type": "STRING" },
+          { "name": "batchId", "type": "STRING" },
+          { "name": "jobTitle", "type": "STRING" },
+          { "name": "laborType", "type": "STRING" },
+          { "name": "minRate", "type": "DOUBLE" },
+          { "name": "maxRate", "type": "DOUBLE" },
+          { "name": "avgRate", "type": "DOUBLE" },
+          { "name": "rateSpread", "type": "DOUBLE" },
+          { "name": "rateYear", "type": "STRING" },
+          { "name": "client", "type": "STRING" },
+          { "name": "country", "type": "STRING" },
+          { "name": "sourceFileName", "type": "STRING" },
+          { "name": "sourceSheet", "type": "STRING" },
+          { "name": "uploadedAt", "type": "DATETIME" }
+        ]
+      },
+      "syncEnabled": true
+    },
+    {
+      "name": "rate_card_batches"
+    }
   ],
   "id": "75a49585-dd65-418d-a47e-1cfd560703e7"
 }
