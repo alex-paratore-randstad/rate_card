@@ -45,9 +45,13 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
     });
   };
 
-  // A batch must be attributable to a client and a country, otherwise records
-  // from different markets end up averaged together in the variance table.
-  const canConfirm = Boolean(client.trim() && country.trim());
+  /**
+   * When the tab picker already gave every row a client and country, there is
+   * nothing left to ask for. Otherwise a batch must still be attributable, or
+   * records from different markets end up averaged together.
+   */
+  const tagged = previewData.perTabTagged === true;
+  const canConfirm = tagged || Boolean(client.trim() && country.trim());
 
   const handleConfirmIngestion = async () => {
     if (!canConfirm) return;
@@ -57,7 +61,7 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
 
     const records = normalizeRawData(previewData, mappings, batchMeta, batchId, uploadedAt);
     const years = Array.from(new Set(records.map((r) => r.rateYear))).sort();
-    await ingestNewBatch(records, previewData.fileName, batchMeta, batchId, uploadedAt, years);
+    await ingestNewBatch(records, previewData.fileName, batchId, uploadedAt, years);
   };
 
   /**
@@ -110,6 +114,19 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
 
         {/* Batch tags applied to every row of this upload */}
         <div className="tonal-card-sub" style={{ marginBottom: '24px' }}>
+          {tagged ? (
+            <div>
+              <span className="text-meta">TAGGED PER TAB</span>
+              <p style={{ fontSize: '0.9rem', color: '#001D35', margin: '6px 0 0 0' }}>
+                Client: <strong>{previewData.tagSummary?.clients.join(', ') || '—'}</strong>
+                {'  ·  '}
+                Country: <strong>{previewData.tagSummary?.countries.join(', ') || '—'}</strong>
+              </p>
+              <span style={{ fontSize: '0.78rem', color: '#415E7D' }}>
+                Set on the previous screen, per workbook tab. Go back to change them.
+              </span>
+            </div>
+          ) : (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: '200px' }}>
               <label className="form-label">Client / Account</label>
@@ -134,6 +151,7 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
               <span style={{ fontSize: '0.78rem', color: '#415E7D' }}>{detectionHint('country')}</span>
             </div>
           </div>
+          )}
           <p style={{ fontSize: '0.85rem', color: '#415E7D', marginTop: '12px', marginBottom: 0 }}>
             {/* The rate year comes from the column headers; the upload date is
                 recorded so a later re-upload of a year can be compared. */}
@@ -206,7 +224,7 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '12px' }}>
           {!canConfirm && (
             <span style={{ fontSize: '0.8rem', color: '#E9A204', marginRight: 'auto' }}>
-              Enter a client and a country to continue.
+              Enter a client and a country to continue, or set them per tab on the previous screen.
             </span>
           )}
           <button className="btn-secondary" onClick={() => setPreviewData(null)}>

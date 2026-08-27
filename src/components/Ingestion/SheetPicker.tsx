@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Layers, AlertTriangle } from 'lucide-react';
-import { SheetSummary } from '../../services/parserService';
+import { CheckCircle2, Layers, AlertTriangle, Copy } from 'lucide-react';
+import { SheetSummary, SheetTags } from '../../services/parserService';
 
 interface Props {
   fileName: string;
   sheets: SheetSummary[];
   onCancel: () => void;
-  onConfirm: (selected: SheetSummary[]) => void;
+  onConfirm: (selected: SheetSummary[], tags: Record<string, SheetTags>) => void;
 }
 
 /**
@@ -18,6 +18,35 @@ export const SheetPicker: React.FC<Props> = ({ fileName, sheets, onCancel, onCon
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(sheets.filter((s) => s.isRateData).map((s) => s.name))
   );
+
+  /**
+   * Client and country per tab. A workbook that splits by market needs these to
+   * differ — tagging the whole upload once would average the markets together.
+   * Prefilled from the tab's own columns when it has them.
+   */
+  const [tags, setTags] = useState<Record<string, SheetTags>>(() =>
+    Object.fromEntries(
+      sheets.map((s) => [
+        s.name,
+        { client: s.detectedClient ?? '', country: s.detectedCountry ?? '' },
+      ])
+    )
+  );
+
+  const setTag = (name: string, field: keyof SheetTags, value: string) =>
+    setTags((prev) => ({ ...prev, [name]: { ...prev[name], [field]: value } }));
+
+  /** Copy the first selected tab's tags down to the rest. */
+  const applyToAll = () => {
+    const first = sheets.find((s) => selected.has(s.name));
+    if (!first) return;
+    const source = tags[first.name];
+    setTags((prev) => {
+      const next = { ...prev };
+      for (const s of sheets) if (selected.has(s.name)) next[s.name] = { ...source };
+      return next;
+    });
+  };
 
   const toggle = (name: string) =>
     setSelected((prev) => {
@@ -57,6 +86,8 @@ export const SheetPicker: React.FC<Props> = ({ fileName, sheets, onCancel, onCon
                 <th style={{ textAlign: 'right' }}>Rows</th>
                 <th style={{ textAlign: 'right' }}>Records</th>
                 <th>Rate Years</th>
+                <th>Client</th>
+                <th>Country</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -76,6 +107,28 @@ export const SheetPicker: React.FC<Props> = ({ fileName, sheets, onCancel, onCon
                   <td style={{ textAlign: 'right' }}>{sheet.sourceRowCount}</td>
                   <td style={{ textAlign: 'right' }}>{sheet.rows.length}</td>
                   <td>{sheet.detectedYears.length ? sheet.detectedYears.join(', ') : '—'}</td>
+                  <td>
+                    <input
+                      type="text"
+                      className="form-control"
+                      style={{ width: '150px' }}
+                      placeholder="e.g. National Average"
+                      disabled={!selected.has(sheet.name)}
+                      value={tags[sheet.name]?.client ?? ''}
+                      onChange={(e) => setTag(sheet.name, 'client', e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      className="form-control"
+                      style={{ width: '140px' }}
+                      placeholder="e.g. United States"
+                      disabled={!selected.has(sheet.name)}
+                      value={tags[sheet.name]?.country ?? ''}
+                      onChange={(e) => setTag(sheet.name, 'country', e.target.value)}
+                    />
+                  </td>
                   <td>
                     {sheet.isRateData ? (
                       <span className="status-pill success">Rate data</span>
@@ -110,6 +163,21 @@ export const SheetPicker: React.FC<Props> = ({ fileName, sheets, onCancel, onCon
           </div>
         )}
 
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+          <button
+            className="btn-secondary"
+            onClick={applyToAll}
+            disabled={chosen.length < 2}
+            style={{ opacity: chosen.length < 2 ? 0.5 : 1, fontSize: '0.85rem' }}
+          >
+            <Copy size={14} />
+            <span>Apply first tab's client and country to all selected</span>
+          </button>
+          <span className="text-meta">
+            Leave blank to set one value for the whole upload on the next screen.
+          </span>
+        </div>
+
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '12px' }}>
           <span className="text-meta" style={{ marginRight: 'auto' }}>
             {chosen.length} of {sheets.length} tabs selected · {totalRecords} records
@@ -119,7 +187,7 @@ export const SheetPicker: React.FC<Props> = ({ fileName, sheets, onCancel, onCon
           <button className="btn-secondary" onClick={onCancel}>Back to Upload</button>
           <button
             className="btn-primary"
-            onClick={() => onConfirm(chosen)}
+            onClick={() => onConfirm(chosen, tags)}
             disabled={chosen.length === 0}
             style={{ opacity: chosen.length ? 1 : 0.5, cursor: chosen.length ? 'pointer' : 'not-allowed' }}
           >

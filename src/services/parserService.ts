@@ -17,6 +17,20 @@ const YEAR_HEADER = 'Rate Year';
  */
 export const SOURCE_SHEET_KEY = '__sourceSheet';
 
+/**
+ * Per-tab client and country, set in the tab picker. Carried on the row like
+ * SOURCE_SHEET_KEY and likewise kept out of `headers`, so they never appear as
+ * mappable columns.
+ */
+export const SHEET_CLIENT_KEY = '__sheetClient';
+export const SHEET_COUNTRY_KEY = '__sheetCountry';
+
+/** Client and country applied to one workbook tab. */
+export interface SheetTags {
+  client: string;
+  country: string;
+}
+
 const HEADER_ALIASES: Record<TargetFieldType, string[]> = {
   jobTitle: ['job title', 'job titles', 'title', 'role', 'position', 'job', 'designation', 'job_title'],
   laborType: ['labor type', 'labour type', 'worker type', 'worker category', 'employment type', 'work type', 'labor_type', 'labor classification', 'resource type', 'job class'],
@@ -341,6 +355,9 @@ export interface SheetSummary {
   /** Rows in the tab before any year unpivot expanded them. */
   sourceRowCount: number;
   detectedYears: string[];
+  /** Client and country found in the tab's own columns, if it has them. */
+  detectedClient?: string;
+  detectedCountry?: string;
   /** Whether this tab looks like rate data worth ingesting. */
   isRateData: boolean;
   /** Why it was judged not to be, for the picker to explain. */
@@ -382,7 +399,20 @@ export const readWorkbookSheets = (file: File): Promise<SheetSummary[]> =>
             }) as RawMatrix;
             const { headers, rows, years, sourceRowCount } = layoutRows(matrix);
             const { ok, reason } = assessSheet(headers, rows);
-            return { name, headers, rows, sourceRowCount, detectedYears: years, isRateData: ok, reason };
+            const mappings = headers.map((h) =>
+              detectColumnMapping(h, rows.slice(0, 5).map((r) => String(r[h] ?? '')))
+            );
+            return {
+              name,
+              headers,
+              rows,
+              sourceRowCount,
+              detectedYears: years,
+              detectedClient: firstMappedValue(rows, mappings, 'client'),
+              detectedCountry: firstMappedValue(rows, mappings, 'country'),
+              isRateData: ok,
+              reason,
+            };
           })
         );
       } catch (err) {
@@ -400,7 +430,8 @@ export const readWorkbookSheets = (file: File): Promise<SheetSummary[]> =>
  */
 export const buildPreviewFromSheets = (
   fileName: string,
-  sheets: SheetSummary[]
+  sheets: SheetSummary[],
+  tags?: Record<string, SheetTags>
 ): IngestionPreviewData => {
   const headers: string[] = [];
   const rows: Record<string, any>[] = [];
@@ -409,7 +440,15 @@ export const buildPreviewFromSheets = (
 
   for (const sheet of sheets) {
     for (const h of sheet.headers) if (!headers.includes(h)) headers.push(h);
-    for (const row of sheet.rows) rows.push({ ...row, [SOURCE_SHEET_KEY]: sheet.name });
+    const tag = tags?.[sheet.name];
+    for (const row of sheet.rows) {
+      rows.push({
+        ...row,
+        [SOURCE_SHEET_KEY]: sheet.name,
+        ...(tag?.client ? { [SHEET_CLIENT_KEY]: tag.client } : {}),
+        ...(tag?.country ? { [SHEET_COUNTRY_KEY]: tag.country } : {}),
+      });
+    }
     sheet.detectedYears.forEach((y) => years.add(y));
     sourceRowCount += sheet.sourceRowCount;
   }
@@ -434,6 +473,24 @@ export const buildPreviewFromSheets = (
   }
 
   preview.sheetNames = sheets.map((s) => s.name);
+
+  // When every row already carries a client and a country, the mapping modal
+  // has nothing left to ask for and shows a summary instead of prompting.
+  const hasClient = (r: Record<string, any>) =>
+    String(r[SHEET_CLIENT_KEY] ?? '').trim() !== '' || !!preview.detectedClient;
+  const hasCountry = (r: Record<string, any>) =>
+    String(r[SHEET_COUNTRY_KEY] ?? '').trim() !== '' || !!preview.detectedCountry;
+  preview.perTabTagged = rows.length > 0 && rows.every((r) => hasClient(r) && hasCountry(r));
+
+  preview.tagSummary = {
+    clients: Array.from(
+      new Set(rows.map((r) => String(r[SHEET_CLIENT_KEY] ?? '').trim()).filter(Boolean))
+    ).sort(),
+    countries: Array.from(
+      new Set(rows.map((r) => String(r[SHEET_COUNTRY_KEY] ?? '').trim()).filter(Boolean))
+    ).sort(),
+  };
+
   return preview;
 };
 
@@ -508,12 +565,21 @@ export const normalizeRawData = (
     const rawLaborType = getMappedValue(row, 'laborType');
     const laborType = rawLaborType ? String(rawLaborType).trim() : undefined;
 
-    // Prefer a value carried in the row's own column, fall back to the
-    // batch-level value the user entered in the mapping modal.
-    const rowClient = getMappedValue(row, 'client');
-    const client = rowClient && String(rowClient).trim() ? String(rowClient).trim() : batchMeta.client;
-    const rowCountry = getMappedValue(row, 'country');
-    const country = rowCountry && String(rowCountry).trim() ? String(rowCountry).trim() : batchMeta.country;
+    /**
+     * Most specific wins: a value in the row's own column, then the per-tab
+     * override set in the tab picker, then the batch-level value from the
+     * mapping modal.
+     */
+    const pick = (mapped: unknown, sheetKey: string, fallback: string): string => {
+      const fromColumn = String(mapped ?? '').trim();
+      if (fromColumn) return fromColumn;
+      const fromSheet = String(row[sheetKey] ?? '').trim();
+      if (fromSheet) return fromSheet;
+      return fallback;
+    };
+
+    const client = pick(getMappedValue(row, 'client'), SHEET_CLIENT_KEY, batchMeta.client);
+    const country = pick(getMappedValue(row, 'country'), SHEET_COUNTRY_KEY, batchMeta.country);
 
     const sourceSheet = row[SOURCE_SHEET_KEY];
 

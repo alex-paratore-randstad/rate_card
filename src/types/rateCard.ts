@@ -32,8 +32,9 @@ export interface NormalizedIngestionBatch {
   sourceFileName: string;
   /** Every rate year this upload carried, in file column order. */
   rateYears: string[];
-  client?: string;
-  country?: string;
+  /** Distinct clients and countries the upload covered. */
+  clients: string[];
+  countries: string[];
   recordCount: number;
   /** How many records Domo actually confirmed, which can be fewer. */
   savedCount: number;
@@ -85,6 +86,10 @@ export interface IngestionPreviewData {
   sourceRowCount?: number;
   /** Workbook tabs this preview was built from. */
   sheetNames?: string[];
+  /** True when every row already has a client and country from tab overrides. */
+  perTabTagged?: boolean;
+  /** Distinct client and country values supplied per tab, for display. */
+  tagSummary?: { clients: string[]; countries: string[] };
   validationErrors: string[];
 }
 

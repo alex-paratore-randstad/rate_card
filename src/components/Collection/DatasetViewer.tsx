@@ -192,8 +192,8 @@ export const DatasetViewer: React.FC = () => {
                         </div>
                       </td>
                       <td>{batch.rateYears.join(', ')}</td>
-                      <td>{batch.client || '—'}</td>
-                      <td>{batch.country || '—'}</td>
+                      <td>{batch.clients.join(', ') || '—'}</td>
+                      <td>{batch.countries.join(', ') || '—'}</td>
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>
                         {batch.savedCount} / {batch.recordCount}
                       </td>

@@ -5,6 +5,7 @@ import {
   readWorkbookSheets,
   buildPreviewFromSheets,
   SheetSummary,
+  SheetTags,
 } from '../../services/parserService';
 import { useRateCard } from '../../context/RateCardContext';
 import { SheetPicker } from './SheetPicker';
@@ -55,8 +56,8 @@ export const FileUploader: React.FC = () => {
     }
   };
 
-  const handleSheetsChosen = (selected: SheetSummary[]) => {
-    setPreviewData(buildPreviewFromSheets(pendingFileName, selected));
+  const handleSheetsChosen = (selected: SheetSummary[], tags: Record<string, SheetTags>) => {
+    setPreviewData(buildPreviewFromSheets(pendingFileName, selected, tags));
     setPendingSheets(null);
   };
 

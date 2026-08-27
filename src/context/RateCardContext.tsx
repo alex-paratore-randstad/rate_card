@@ -4,7 +4,6 @@ import {
   NormalizedIngestionBatch,
   IngestionPreviewData,
   RateCardFilterState,
-  BatchMeta,
 } from '../types/rateCard';
 import {
   fetchHistoricalRateCards,
@@ -32,7 +31,6 @@ interface RateCardContextType {
   ingestNewBatch: (
     records: RateCardRecord[],
     sourceFileName: string,
-    batchMeta: BatchMeta,
     batchId: string,
     uploadedAt: string,
     rateYears: string[]
@@ -83,7 +81,6 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const ingestNewBatch = async (
     records: RateCardRecord[],
     sourceFileName: string,
-    batchMeta: BatchMeta,
     batchId: string,
     uploadedAt: string,
     rateYears: string[]
@@ -96,8 +93,9 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         batchId,
         sourceFileName,
         rateYears,
-        client: batchMeta.client,
-        country: batchMeta.country,
+        // Per-tab overrides mean one upload can cover several markets.
+        clients: Array.from(new Set(records.map((r) => r.client || '').filter(Boolean))).sort(),
+        countries: Array.from(new Set(records.map((r) => r.country || '').filter(Boolean))).sort(),
         recordCount: records.length,
         // Status reflects what actually happened, rather than assuming success.
         savedCount: result.savedCount,
