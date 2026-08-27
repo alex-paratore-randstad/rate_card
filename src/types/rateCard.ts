@@ -21,6 +21,8 @@ export interface RateCardRecord {
   client?: string;
   country?: string;
   sourceFileName?: string;
+  /** Which workbook tab the row came from, when the file had several. */
+  sourceSheet?: string;
   /** ISO timestamp of the upload. */
   uploadedAt: string;
 }
@@ -81,6 +83,8 @@ export interface IngestionPreviewData {
   detectedCountry?: string;
   /** Source rows before the year unpivot expanded them. */
   sourceRowCount?: number;
+  /** Workbook tabs this preview was built from. */
+  sheetNames?: string[];
   validationErrors: string[];
 }
 

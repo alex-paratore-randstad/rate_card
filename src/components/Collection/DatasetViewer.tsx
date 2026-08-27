@@ -33,7 +33,7 @@ export const DatasetViewer: React.FC = () => {
     if (rateCards.length === 0) return;
     const headers = [
       'ID', 'Batch ID', 'Job Title', 'Labor Type', 'Min Pay', 'Max Pay', 'Spread',
-      'Rate Year', 'Client', 'Country', 'Source File', 'Uploaded At', 'Superseded',
+      'Rate Year', 'Client', 'Country', 'Source File', 'Source Tab', 'Uploaded At', 'Superseded',
     ];
     const quote = (value?: string) => `"${(value || '').replace(/"/g, '""')}"`;
     const rows = rateCards.map((r) => [
@@ -48,6 +48,7 @@ export const DatasetViewer: React.FC = () => {
       quote(r.client),
       quote(r.country),
       quote(r.sourceFileName),
+      quote(r.sourceSheet),
       r.uploadedAt,
       currentIds.has(r.id) ? 'No' : 'Yes',
     ]);
@@ -111,6 +112,7 @@ export const DatasetViewer: React.FC = () => {
                 <th>Rate Year</th>
                 <th>Client</th>
                 <th>Country</th>
+                <th>Tab</th>
                 <th>Uploaded</th>
                 <th>Status</th>
               </tr>
@@ -118,7 +120,7 @@ export const DatasetViewer: React.FC = () => {
             <tbody>
               {rateCards.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ textAlign: 'center', padding: '32px', color: '#415E7D' }}>
+                  <td colSpan={11} style={{ textAlign: 'center', padding: '32px', color: '#415E7D' }}>
                     No records yet.
                   </td>
                 </tr>
@@ -139,6 +141,7 @@ export const DatasetViewer: React.FC = () => {
                       <td style={{ fontWeight: 600 }}>{record.rateYear}</td>
                       <td>{record.client || '—'}</td>
                       <td>{record.country || '—'}</td>
+                      <td style={{ fontSize: '0.8rem' }}>{record.sourceSheet || '—'}</td>
                       <td style={{ fontSize: '0.8rem' }}>
                         {formatDateRandstad(record.uploadedAt.slice(0, 10))}
                       </td>

@@ -11,6 +11,12 @@ import {
 /** Synthesised column the year unpivot writes the rate year into. */
 const YEAR_HEADER = 'Rate Year';
 
+/**
+ * Which workbook tab a row came from. Carried on the row for traceability but
+ * kept out of `headers`, so it never appears as a mappable column.
+ */
+export const SOURCE_SHEET_KEY = '__sourceSheet';
+
 const HEADER_ALIASES: Record<TargetFieldType, string[]> = {
   jobTitle: ['job title', 'job titles', 'title', 'role', 'position', 'job', 'designation', 'job_title'],
   laborType: ['labor type', 'labour type', 'worker type', 'worker category', 'employment type', 'work type', 'labor_type', 'labor classification', 'resource type', 'job class'],
@@ -302,14 +308,133 @@ export const unpivotYearColumns = (
   return { headers, rows, years, sourceRowCount: dataRows.length };
 };
 
-/** Pick the year-column path or the conventional one, then build the preview. */
-const matrixToPreview = (fileName: string, matrix: RawMatrix): IngestionPreviewData => {
+/** Resolve a matrix to long rows using whichever layout it matches. */
+const layoutRows = (
+  matrix: RawMatrix
+): { headers: string[]; rows: Record<string, any>[]; years: string[]; sourceRowCount: number } => {
   if (detectYearColumnLayout(matrix)) {
     const { headers, rows, years, sourceRowCount } = unpivotYearColumns(matrix);
-    return buildPreview(fileName, headers, rows, years, sourceRowCount);
+    return { headers, rows, years, sourceRowCount };
   }
   const { headers, rows } = matrixToObjectRows(matrix);
-  return buildPreview(fileName, headers, rows);
+  return { headers, rows, years: [], sourceRowCount: rows.length };
+};
+
+/** Pick the year-column path or the conventional one, then build the preview. */
+const matrixToPreview = (fileName: string, matrix: RawMatrix): IngestionPreviewData => {
+  const { headers, rows, years, sourceRowCount } = layoutRows(matrix);
+  return buildPreview(fileName, headers, rows, years.length ? years : undefined, sourceRowCount);
+};
+
+// ---------------------------------------------------------------------------
+// Workbook tabs
+//
+// A workbook often carries several tabs and only some hold rate data. Reading
+// only the first sheet silently discarded the rest, so every tab is inspected
+// and the choice is put in front of the user.
+// ---------------------------------------------------------------------------
+
+export interface SheetSummary {
+  name: string;
+  headers: string[];
+  rows: Record<string, any>[];
+  /** Rows in the tab before any year unpivot expanded them. */
+  sourceRowCount: number;
+  detectedYears: string[];
+  /** Whether this tab looks like rate data worth ingesting. */
+  isRateData: boolean;
+  /** Why it was judged not to be, for the picker to explain. */
+  reason: string;
+}
+
+/** A tab is ingestable when it yields a job title and at least one rate column. */
+const assessSheet = (headers: string[], rows: Record<string, any>[]): { ok: boolean; reason: string } => {
+  if (rows.length === 0) return { ok: false, reason: 'No data rows' };
+
+  const targets = new Set(
+    headers.map((h) => {
+      const samples = rows.slice(0, 5).map((r) => String(r[h] ?? ''));
+      return detectColumnMapping(h, samples).targetField;
+    })
+  );
+
+  if (!targets.has('jobTitle')) return { ok: false, reason: 'No job title column' };
+  if (!targets.has('minRate') && !targets.has('maxRate')) {
+    return { ok: false, reason: 'No pay rate columns' };
+  }
+  return { ok: true, reason: '' };
+};
+
+/** Read every tab in a workbook and describe what each one holds. */
+export const readWorkbookSheets = (file: File): Promise<SheetSummary[]> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+
+        resolve(
+          workbook.SheetNames.map((name) => {
+            const matrix = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[name], {
+              header: 1,
+              defval: '',
+            }) as RawMatrix;
+            const { headers, rows, years, sourceRowCount } = layoutRows(matrix);
+            const { ok, reason } = assessSheet(headers, rows);
+            return { name, headers, rows, sourceRowCount, detectedYears: years, isRateData: ok, reason };
+          })
+        );
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = (err) => reject(err);
+    reader.readAsArrayBuffer(file);
+  });
+
+/**
+ * Combine the chosen tabs into a single preview. Each tab is laid out on its
+ * own first, so a workbook mixing a year-column tab with a plain one still
+ * works, and every row remembers which tab it came from.
+ */
+export const buildPreviewFromSheets = (
+  fileName: string,
+  sheets: SheetSummary[]
+): IngestionPreviewData => {
+  const headers: string[] = [];
+  const rows: Record<string, any>[] = [];
+  const years = new Set<string>();
+  let sourceRowCount = 0;
+
+  for (const sheet of sheets) {
+    for (const h of sheet.headers) if (!headers.includes(h)) headers.push(h);
+    for (const row of sheet.rows) rows.push({ ...row, [SOURCE_SHEET_KEY]: sheet.name });
+    sheet.detectedYears.forEach((y) => years.add(y));
+    sourceRowCount += sheet.sourceRowCount;
+  }
+
+  const preview = buildPreview(
+    fileName,
+    headers,
+    rows,
+    years.size ? Array.from(years).sort() : undefined,
+    sourceRowCount
+  );
+
+  // Tabs are expected to share a layout. Say so plainly when they do not,
+  // rather than quietly leaving blank cells wherever a header was missing.
+  const mismatched = sheets.filter(
+    (s) => s.headers.length !== headers.length || s.headers.some((h) => !headers.includes(h))
+  );
+  if (sheets.length > 1 && mismatched.length > 0) {
+    preview.validationErrors.push(
+      `Note: the selected tabs do not all share the same columns. Rows from tabs missing a column will have it blank.`
+    );
+  }
+
+  preview.sheetNames = sheets.map((s) => s.name);
+  return preview;
 };
 
 const parseCSVFile = (file: File): Promise<IngestionPreviewData> => {
@@ -390,6 +515,8 @@ export const normalizeRawData = (
     const rowCountry = getMappedValue(row, 'country');
     const country = rowCountry && String(rowCountry).trim() ? String(rowCountry).trim() : batchMeta.country;
 
+    const sourceSheet = row[SOURCE_SHEET_KEY];
+
     return {
       id: `rc-${rateYear}-${batchId}-${idx}`,
       batchId,
@@ -403,6 +530,7 @@ export const normalizeRawData = (
       client,
       country,
       sourceFileName: previewData.fileName,
+      sourceSheet: sourceSheet ? String(sourceSheet) : undefined,
       uploadedAt,
     };
   });

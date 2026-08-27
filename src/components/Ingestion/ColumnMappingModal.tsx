@@ -82,6 +82,14 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
             <span className="app-subtitle">
               Source file: <strong>{previewData.fileName}</strong> ({previewData.rawRows.length} records)
             </span>
+            {previewData.sheetNames && previewData.sheetNames.length > 0 && (
+              <div style={{ marginTop: '6px' }}>
+                <span className="status-pill info">
+                  {previewData.sheetNames.length} tab
+                  {previewData.sheetNames.length === 1 ? '' : 's'}: {previewData.sheetNames.join(', ')}
+                </span>
+              </div>
+            )}
             {years.length > 0 && (
               <div style={{ marginTop: '6px' }}>
                 <span className="status-pill info">

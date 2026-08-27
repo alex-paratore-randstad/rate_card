@@ -1,7 +1,13 @@
 import React, { useState, useRef } from 'react';
 import { UploadCloud, FileText, AlertTriangle } from 'lucide-react';
-import { parseRateCardFile } from '../../services/parserService';
+import {
+  parseRateCardFile,
+  readWorkbookSheets,
+  buildPreviewFromSheets,
+  SheetSummary,
+} from '../../services/parserService';
 import { useRateCard } from '../../context/RateCardContext';
+import { SheetPicker } from './SheetPicker';
 
 export const FileUploader: React.FC = () => {
   const { setPreviewData } = useRateCard();
@@ -9,6 +15,9 @@ export const FileUploader: React.FC = () => {
   const [isParsing, setIsParsing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pasteContent, setPasteContent] = useState<string>('');
+  // Set when a workbook has more than one tab, so the user can choose.
+  const [pendingSheets, setPendingSheets] = useState<SheetSummary[] | null>(null);
+  const [pendingFileName, setPendingFileName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -22,13 +31,38 @@ export const FileUploader: React.FC = () => {
     setIsParsing(true);
     setErrorMessage(null);
     try {
-      const parsed = await parseRateCardFile(file);
-      setPreviewData(parsed);
+      const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+
+      if (isExcel) {
+        // Inspect every tab rather than assuming the first one holds the data.
+        const sheets = await readWorkbookSheets(file);
+        if (sheets.length > 1) {
+          setPendingFileName(file.name);
+          setPendingSheets(sheets);
+          return;
+        }
+        if (sheets.length === 1) {
+          setPreviewData(buildPreviewFromSheets(file.name, sheets));
+          return;
+        }
+      }
+
+      setPreviewData(await parseRateCardFile(file));
     } catch (err: any) {
       setErrorMessage(`Failed to parse file: ${err.message || 'Invalid format'}`);
     } finally {
       setIsParsing(false);
     }
+  };
+
+  const handleSheetsChosen = (selected: SheetSummary[]) => {
+    setPreviewData(buildPreviewFromSheets(pendingFileName, selected));
+    setPendingSheets(null);
+  };
+
+  const cancelSheetPicker = () => {
+    setPendingSheets(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handlePasteSubmit = () => {
@@ -45,6 +79,15 @@ export const FileUploader: React.FC = () => {
   };
 
   return (
+    <>
+      {pendingSheets && (
+        <SheetPicker
+          fileName={pendingFileName}
+          sheets={pendingSheets}
+          onCancel={cancelSheetPicker}
+          onConfirm={handleSheetsChosen}
+        />
+      )}
     <div className="tonal-card">
       <div className="card-header-row">
         <div>
@@ -154,5 +197,6 @@ export const FileUploader: React.FC = () => {
         </div>
       </div>
     </div>
+    </>
   );
 };

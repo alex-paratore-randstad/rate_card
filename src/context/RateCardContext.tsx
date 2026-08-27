@@ -138,19 +138,27 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   /**
-   * The newest upload of each rate year. Re-uploading a year supersedes the
-   * previous one for reporting, while the older records stay in `rateCards` so
-   * the collection viewer can still show how that year changed.
+   * The newest upload of each rate year, per client and country. Re-uploading a
+   * year supersedes the previous one for reporting, while the older records stay
+   * in `rateCards` so the collection viewer can show how that year changed.
+   *
+   * The key includes client and country deliberately. Keyed on year alone, a
+   * file covering only the US would supersede every other market's records for
+   * that year and silently drop them from the report.
    */
+  const supersedeKey = (r: RateCardRecord) =>
+    `${r.rateYear}||${r.client || ''}||${r.country || ''}`;
+
   const currentRateCards = useMemo(() => {
-    const newestBatchPerYear = new Map<string, { batchId: string; uploadedAt: string }>();
+    const newest = new Map<string, { batchId: string; uploadedAt: string }>();
     for (const r of rateCards) {
-      const seen = newestBatchPerYear.get(r.rateYear);
+      const key = supersedeKey(r);
+      const seen = newest.get(key);
       if (!seen || r.uploadedAt > seen.uploadedAt) {
-        newestBatchPerYear.set(r.rateYear, { batchId: r.batchId, uploadedAt: r.uploadedAt });
+        newest.set(key, { batchId: r.batchId, uploadedAt: r.uploadedAt });
       }
     }
-    return rateCards.filter((r) => newestBatchPerYear.get(r.rateYear)?.batchId === r.batchId);
+    return rateCards.filter((r) => newest.get(supersedeKey(r))?.batchId === r.batchId);
   }, [rateCards]);
 
   const availableClients = useMemo(
