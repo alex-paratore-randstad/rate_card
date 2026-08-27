@@ -10,6 +10,8 @@ import {
   saveRateCardsToDomo,
   fetchBatches,
   saveBatchToDomo,
+  probeDomoAccess,
+  DomoAccess,
 } from '../services/domoService';
 
 interface RateCardContextType {
@@ -37,6 +39,8 @@ interface RateCardContextType {
   ) => Promise<boolean>;
   refreshDataset: () => Promise<void>;
   isLoading: boolean;
+  /** null while the connection probe is still running. */
+  domoAccess: DomoAccess | null;
   notificationMessage: { type: 'success' | 'error' | 'info'; text: string } | null;
   clearNotification: () => void;
 }
@@ -54,10 +58,12 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   >(null);
 
   const [filters, setFilters] = useState<RateCardFilterState>({ client: 'ALL', country: 'ALL' });
+  const [domoAccess, setDomoAccess] = useState<DomoAccess | null>(null);
 
   const refreshDataset = async () => {
     setIsLoading(true);
     try {
+      setDomoAccess(await probeDomoAccess());
       const [records, batchList] = await Promise.all([fetchHistoricalRateCards(), fetchBatches()]);
       setRateCards(records);
       setBatches(batchList);
@@ -201,6 +207,7 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         ingestNewBatch,
         refreshDataset,
         isLoading,
+        domoAccess,
         notificationMessage,
         clearNotification,
       }}

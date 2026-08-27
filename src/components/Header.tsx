@@ -1,11 +1,10 @@
 import React from 'react';
 import { Database, RefreshCw, UploadCloud, Cloud, CloudOff } from 'lucide-react';
 import { useRateCard } from '../context/RateCardContext';
-import { isDomoEnvironment } from '../services/domoService';
+
 
 export const Header: React.FC = () => {
-  const { setActiveTab, refreshDataset, isLoading, rateCards } = useRateCard();
-  const inDomo = isDomoEnvironment();
+  const { setActiveTab, refreshDataset, isLoading, rateCards, domoAccess } = useRateCard();
 
   return (
     <header className="brand-header">
@@ -20,18 +19,30 @@ export const Header: React.FC = () => {
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {/* Whether the Domo SDK is present decides where a save goes. Showing it
             means a local-only save is never a surprise discovered after upload. */}
-        {inDomo ? (
-          <div className="status-pill success" title="window.domo detected — saves write to the Domo collection">
+        {domoAccess === null ? (
+          <div className="status-pill info">
             <Cloud size={14} />
-            <span>Connected to Domo</span>
+            <span>Checking Domo…</span>
           </div>
-        ) : (
+        ) : domoAccess === 'none' ? (
           <div
             className="status-pill warning"
-            title="window.domo not found — this is local development, saves stay in the browser"
+            title="Neither window.domo nor the /domo proxy responded — saves stay in this browser"
           >
             <CloudOff size={14} />
             <span>Local dev — not saving to Domo</span>
+          </div>
+        ) : (
+          <div
+            className="status-pill success"
+            title={
+              domoAccess === 'sdk'
+                ? 'domo.js SDK detected — saves write to the Domo collection'
+                : 'Reaching the collection through the app proxy — saves write to Domo'
+            }
+          >
+            <Cloud size={14} />
+            <span>Connected to Domo{domoAccess === 'proxy' ? ' (proxy)' : ''}</span>
           </div>
         )}
 

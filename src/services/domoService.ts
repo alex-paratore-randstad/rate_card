@@ -10,8 +10,92 @@ const LOCAL_BATCHES_KEY = 'randstad_batches';
 /** How many collection writes to keep in flight at once. */
 const WRITE_CONCURRENCY = 25;
 
-export const isDomoEnvironment = (): boolean =>
+/**
+ * How this app can reach Domo.
+ *
+ * 'sdk'   — domo.js loaded and window.domo is usable.
+ * 'proxy' — domo.js is absent, but the app container still proxies same-origin
+ *           /domo/... requests, so plain fetch reaches the collection.
+ * 'none'  — neither works; this is local development.
+ *
+ * The SDK script is not always served inside a published card, so relying on
+ * window.domo alone reported a hosted app as local development and quietly sent
+ * every save to browser storage.
+ */
+export type DomoAccess = 'sdk' | 'proxy' | 'none';
+
+let cachedAccess: DomoAccess | null = null;
+let probeInFlight: Promise<DomoAccess> | null = null;
+
+/** Synchronous check for the SDK only; prefer probeDomoAccess. */
+export const hasDomoSdk = (): boolean =>
   typeof window !== 'undefined' && !!window.domo && typeof window.domo.get === 'function';
+
+export const probeDomoAccess = async (): Promise<DomoAccess> => {
+  if (cachedAccess) return cachedAccess;
+  if (probeInFlight) return probeInFlight;
+
+  probeInFlight = (async (): Promise<DomoAccess> => {
+    if (hasDomoSdk()) {
+      cachedAccess = 'sdk';
+    } else {
+      try {
+        const res = await fetch(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`, {
+          headers: { Accept: 'application/json' },
+          credentials: 'same-origin',
+        });
+        cachedAccess = res.ok ? 'proxy' : 'none';
+        if (!res.ok) {
+          console.warn(`[Domo] Collection probe returned HTTP ${res.status}; treating as local.`);
+        }
+      } catch (error) {
+        console.warn('[Domo] Collection probe failed; treating as local development.', error);
+        cachedAccess = 'none';
+      }
+    }
+    console.info(`[Domo] Access mode: ${cachedAccess}`);
+    return cachedAccess;
+  })();
+
+  return probeInFlight;
+};
+
+const jsonOrThrow = async (res: Response, what: string) => {
+  if (!res.ok) throw new Error(`${what} failed: HTTP ${res.status}`);
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+};
+
+/** GET through whichever channel is available. */
+const domoGet = async (url: string): Promise<any> => {
+  const access = await probeDomoAccess();
+  if (access === 'sdk') return window.domo.get(url);
+  if (access === 'proxy') {
+    return jsonOrThrow(
+      await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' }),
+      'GET'
+    );
+  }
+  throw new Error('Not running inside Domo');
+};
+
+/** POST through whichever channel is available. */
+const domoPost = async (url: string, body: any): Promise<any> => {
+  const access = await probeDomoAccess();
+  if (access === 'sdk') return window.domo.post(url, body);
+  if (access === 'proxy') {
+    return jsonOrThrow(
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      }),
+      'POST'
+    );
+  }
+  throw new Error('Not running inside Domo');
+};
 
 export interface SaveResult {
   success: boolean;
@@ -64,9 +148,9 @@ const isCurrentSchema = (record: any): boolean =>
 // ---------------------------------------------------------------------------
 
 export const fetchHistoricalRateCards = async (): Promise<RateCardRecord[]> => {
-  if (isDomoEnvironment()) {
+  if ((await probeDomoAccess()) !== 'none') {
     try {
-      const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`);
+      const docs = await domoGet(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`);
       const all = unwrapDocuments<any>(docs);
       const current = all.filter(isCurrentSchema);
       if (current.length < all.length) {
@@ -99,15 +183,15 @@ export const saveRateCardsToDomo = async (
 ): Promise<SaveResult> => {
   const attemptedCount = newRecords.length;
 
-  if (isDomoEnvironment()) {
+  if ((await probeDomoAccess()) !== 'none') {
     const savedCount = await writeInChunks(newRecords, (record) =>
-      window.domo.post(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`, record)
+      domoPost(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`, record)
     );
 
     // Read back so the confirmation reflects what Domo holds, not what was sent.
     let confirmed = savedCount;
     try {
-      const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`);
+      const docs = await domoGet(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`);
       confirmed = unwrapDocuments<any>(docs).filter((r) => r?.batchId === batchId).length;
     } catch (error) {
       console.warn('[Domo Collections] Could not verify the write by read-back:', error);
@@ -158,9 +242,9 @@ export const saveRateCardsToDomo = async (
 // ---------------------------------------------------------------------------
 
 export const fetchBatches = async (): Promise<NormalizedIngestionBatch[]> => {
-  if (isDomoEnvironment()) {
+  if ((await probeDomoAccess()) !== 'none') {
     try {
-      const docs = await window.domo.get(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`);
+      const docs = await domoGet(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`);
       return unwrapDocuments<any>(docs).filter(
         (b) => b && Array.isArray(b.rateYears)
       ) as NormalizedIngestionBatch[];
@@ -184,9 +268,9 @@ export const fetchBatches = async (): Promise<NormalizedIngestionBatch[]> => {
 };
 
 export const saveBatchToDomo = async (batch: NormalizedIngestionBatch): Promise<void> => {
-  if (isDomoEnvironment()) {
+  if ((await probeDomoAccess()) !== 'none') {
     try {
-      await window.domo.post(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`, batch);
+      await domoPost(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`, batch);
     } catch (error) {
       // The audit entry failing is worth knowing about, but the records are the
       // payload — do not fail the whole ingestion over the log line.
