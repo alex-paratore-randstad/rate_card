@@ -61,7 +61,10 @@ export const probeDomoAccess = async (): Promise<DomoAccess> => {
 };
 
 const jsonOrThrow = async (res: Response, what: string) => {
-  if (!res.ok) throw new Error(`${what} failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`${what} failed: HTTP ${res.status}${detail ? ` — ${detail.slice(0, 300)}` : ''}`);
+  }
   const text = await res.text();
   return text ? JSON.parse(text) : null;
 };
@@ -125,18 +128,23 @@ async function writeInChunks<T>(
   items: T[],
   fn: (item: T) => Promise<unknown>,
   size = WRITE_CONCURRENCY
-): Promise<number> {
+): Promise<{ saved: number; firstError?: string }> {
   let saved = 0;
+  let firstError: string | undefined;
+
   for (let i = 0; i < items.length; i += size) {
     const slice = items.slice(i, i + size);
     const results = await Promise.allSettled(slice.map(fn));
     saved += results.filter((r) => r.status === 'fulfilled').length;
-    const failed = results.filter((r) => r.status === 'rejected');
+    const failed = results.filter(
+      (r): r is PromiseRejectedResult => r.status === 'rejected'
+    );
     if (failed.length) {
-      console.warn(`[Domo Collections] ${failed.length} write(s) failed in this chunk`, failed[0]);
+      console.warn(`[Domo Collections] ${failed.length} write(s) failed in this chunk`, failed[0].reason);
+      firstError = firstError ?? String(failed[0].reason?.message ?? failed[0].reason);
     }
   }
-  return saved;
+  return { saved, firstError };
 }
 
 /** A stored document from an older schema has no rateYear and cannot be shown. */
@@ -184,8 +192,11 @@ export const saveRateCardsToDomo = async (
   const attemptedCount = newRecords.length;
 
   if ((await probeDomoAccess()) !== 'none') {
-    const savedCount = await writeInChunks(newRecords, (record) =>
-      domoPost(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`, record)
+    // The collections API stores documents as { id, content }, and a write must
+    // send that shape. Posting the bare record is rejected, which is why reads
+    // succeeded while every write failed.
+    const { saved: savedCount, firstError } = await writeInChunks(newRecords, (record) =>
+      domoPost(`${COLLECTIONS_BASE}/${COLLECTION_RECORDS}/documents/`, { content: record })
     );
 
     // Read back so the confirmation reflects what Domo holds, not what was sent.
@@ -203,7 +214,9 @@ export const saveRateCardsToDomo = async (
         savedCount: 0,
         attemptedCount,
         target: 'domo',
-        message: `Failed to save any of ${attemptedCount} records to Domo. Nothing was stored — check the browser console and the app's collection permissions.`,
+        message: `Failed to save any of ${attemptedCount} records to Domo. Nothing was stored.${
+          firstError ? ` First error: ${firstError}` : ''
+        }`,
       };
     }
     if (confirmed < attemptedCount) {
@@ -270,7 +283,7 @@ export const fetchBatches = async (): Promise<NormalizedIngestionBatch[]> => {
 export const saveBatchToDomo = async (batch: NormalizedIngestionBatch): Promise<void> => {
   if ((await probeDomoAccess()) !== 'none') {
     try {
-      await domoPost(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`, batch);
+      await domoPost(`${COLLECTIONS_BASE}/${COLLECTION_BATCHES}/documents/`, { content: batch });
     } catch (error) {
       // The audit entry failing is worth knowing about, but the records are the
       // payload — do not fail the whole ingestion over the log line.

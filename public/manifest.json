@@ -5,7 +5,7 @@
     "width": 12,
     "height": 8
   },
-  "collections": [
+  "collectionsMapping": [
     {
       "name": "rate_card_history",
       "schema": {
@@ -26,10 +26,13 @@
           { "name": "uploadedAt", "type": "DATETIME" }
         ]
       },
-      "syncEnabled": true
+      "syncEnabled": true,
+      "defaultPermission": ["read", "read_content", "create_content", "update_content"]
     },
     {
-      "name": "rate_card_batches"
+      "name": "rate_card_batches",
+      "syncEnabled": false,
+      "defaultPermission": ["read", "read_content", "create_content", "update_content"]
     }
   ],
   "id": "75a49585-dd65-418d-a47e-1cfd560703e7"
