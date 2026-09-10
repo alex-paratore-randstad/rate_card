@@ -14,10 +14,13 @@ import { probeDomoAccess } from './domoService';
  *
  * Datasets are a different channel from the collections in domoService: they
  * are read-only, addressed by the alias declared in `datasetsMapping`, and
- * served at `/data/v1/<alias>` as a plain JSON array of row objects. That is
- * the pattern the fte_tool app already uses successfully in this instance, and
- * it is deliberately followed rather than the documented SDK call, because
- * domo.js is not served here.
+ * served at `/data/v1/<alias>`. Plain same-origin fetch is used rather than the
+ * documented SDK call because domo.js is not served here.
+ *
+ * The response body is not reliably a bare array. fte_tool assumes one and
+ * mostly gets away with it, but this instance returned an object, so
+ * `extractRows` unwraps the plausible wrapper shapes and reports exactly what
+ * arrived when it cannot.
  *
  * A mapping only takes effect on publish, so a dataset that reads as absent in
  * a running app usually means the manifest changed without a republish.
@@ -100,6 +103,68 @@ const coerceNumerics = <T>(alias: DatasetAlias, rows: Record<string, unknown>[])
   });
 };
 
+/**
+ * Property names a wrapped row array is likely to hide behind, most specific
+ * first. Checked before the generic single-array fallback so a payload that
+ * happens to carry two arrays still resolves predictably.
+ */
+const ROW_ARRAY_KEYS = ['rows', 'data', 'records', 'results', 'items'];
+
+/**
+ * Get the row array out of whatever `/data/v1` returned.
+ *
+ * The endpoint was expected to return a bare JSON array — that is what the
+ * working fte_tool app assumes, and what the Domo Apps documentation
+ * describes. It does not always: this instance returned an object. Rather than
+ * guess at one wrapper shape, unwrap the plausible ones and, failing that,
+ * describe exactly what arrived so the next attempt is informed rather than
+ * another guess.
+ */
+const extractRows = (
+  payload: unknown
+): { rows: Record<string, unknown>[] | null; shape: string } => {
+  if (Array.isArray(payload)) {
+    return { rows: payload as Record<string, unknown>[], shape: 'bare array' };
+  }
+
+  if (payload && typeof payload === 'object') {
+    const obj = payload as Record<string, unknown>;
+
+    for (const key of ROW_ARRAY_KEYS) {
+      if (Array.isArray(obj[key])) {
+        return {
+          rows: obj[key] as Record<string, unknown>[],
+          shape: `array wrapped in "${key}"`,
+        };
+      }
+    }
+
+    const arrayProps = Object.entries(obj).filter(([, v]) => Array.isArray(v));
+    if (arrayProps.length === 1) {
+      return {
+        rows: arrayProps[0][1] as Record<string, unknown>[],
+        shape: `array wrapped in "${arrayProps[0][0]}"`,
+      };
+    }
+
+    // No array to be found. Report the keys and a bounded sample of the body —
+    // an object here is often Domo describing a problem with a 200 status,
+    // and the description is the whole diagnostic.
+    const keys = Object.keys(obj);
+    const sample = JSON.stringify(obj).slice(0, 400);
+    return {
+      rows: null,
+      shape: keys.length
+        ? `object with keys [${keys.join(', ')}] and ${arrayProps.length} array propert${
+            arrayProps.length === 1 ? 'y' : 'ies'
+          }. Body: ${sample}`
+        : `empty object. Body: ${sample}`,
+    };
+  }
+
+  return { rows: null, shape: `${payload === null ? 'null' : typeof payload}` };
+};
+
 // ---------------------------------------------------------------------------
 // Reading
 // ---------------------------------------------------------------------------
@@ -135,14 +200,19 @@ export const fetchDataset = async <T>(alias: DatasetAlias): Promise<DatasetReadR
     }
 
     const payload = await res.json();
-    if (!Array.isArray(payload)) {
+    const { rows, shape } = extractRows(payload);
+
+    if (!rows) {
       throw new Error(
-        `Dataset "${alias}" returned ${typeof payload}, not an array of rows. ` +
-          'The read path assumes /data/v1 returns a plain JSON array.'
+        `Dataset "${alias}" returned no row array — ${shape}. ` +
+          'If the body describes an access or mapping problem, the dataset is ' +
+          'probably not bound on this card: check the card settings, and that ' +
+          'the dataset is shared with the app.'
       );
     }
-
-    const rows = payload as Record<string, unknown>[];
+    if (shape !== 'bare array') {
+      console.info(`[Domo Dataset] ${alias}: response was an ${shape}.`);
+    }
     // Row count and elapsed time are logged because the size of the actuals
     // dataset is the open question that decides whether this stays a full read.
     console.info(
@@ -193,8 +263,8 @@ export const probeQuerySupport = async (
   const read = async (url: string) => {
     const res = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.json();
-    return Array.isArray(body) ? body.length : -1;
+    const { rows } = extractRows(await res.json());
+    return rows ? rows.length : -1;
   };
 
   try {
