@@ -5,6 +5,61 @@
     "width": 12,
     "height": 8
   },
+  "datasetsMapping": [
+    {
+      "dataSetId": "2d9e6aa1-3a43-40f2-b57a-f380bdc12060",
+      "alias": "rate_card_client_directory",
+      "fields": [
+        { "alias": "rsr_client_code", "columnName": "rsr_client_code" },
+        { "alias": "account_name", "columnName": "account_name" },
+        { "alias": "rsr_country", "columnName": "rsr_country" },
+        { "alias": "hours_sum", "columnName": "hours_sum" },
+        { "alias": "month_max", "columnName": "month_max" }
+      ]
+    },
+    {
+      "dataSetId": "afb52e75-60d6-4e86-a882-b779a3a4ca61",
+      "alias": "rate_card_actuals_assignment",
+      "fields": [
+        { "alias": "assignment_unique_key", "columnName": "assignment_unique_key" },
+        { "alias": "snapshot_months", "columnName": "snapshot_months" },
+        { "alias": "rsr_client_code", "columnName": "rsr_client_code" },
+        { "alias": "account_name", "columnName": "account_name" },
+        { "alias": "title_cleaned", "columnName": "title_cleaned" },
+        { "alias": "ms_category_1", "columnName": "ms_category_1" },
+        { "alias": "ms_category_2", "columnName": "ms_category_2" },
+        { "alias": "soc_broad_group", "columnName": "soc_broad_group" },
+        { "alias": "onet_detailed_occupation", "columnName": "onet_detailed_occupation" },
+        { "alias": "rsr_labor_type", "columnName": "rsr_labor_type" },
+        { "alias": "contingent_vs_sow", "columnName": "contingent_vs_sow" },
+        { "alias": "collar_type", "columnName": "collar_type" },
+        { "alias": "specialization", "columnName": "specialization" },
+        { "alias": "rsr_country", "columnName": "rsr_country" },
+        { "alias": "state_province", "columnName": "state_province" },
+        { "alias": "city", "columnName": "city" },
+        { "alias": "market", "columnName": "market" },
+        { "alias": "rsr_region", "columnName": "rsr_region" },
+        { "alias": "pay_rate_st_hr", "columnName": "pay_rate_st_hr" },
+        { "alias": "pay_rate_st_hr_initial", "columnName": "pay_rate_st_hr_initial" },
+        { "alias": "bill_rate_st_hr", "columnName": "bill_rate_st_hr" },
+        { "alias": "max_template_bill_rate_st_hr", "columnName": "max_template_bill_rate_st_hr" },
+        { "alias": "compliance_vs_max_template_bill_rate", "columnName": "compliance_vs_max_template_bill_rate" },
+        { "alias": "card_year", "columnName": "card_year" },
+        { "alias": "pay_drift", "columnName": "pay_drift" },
+        { "alias": "pay_drift_pct", "columnName": "pay_drift_pct" },
+        { "alias": "pay_dollars", "columnName": "pay_dollars" },
+        { "alias": "bill_dollars", "columnName": "bill_dollars" },
+        { "alias": "hours_to_date", "columnName": "hours_to_date" },
+        { "alias": "currency", "columnName": "currency" },
+        { "alias": "assignment_status", "columnName": "assignment_status" },
+        { "alias": "is_open", "columnName": "is_open" },
+        { "alias": "extended", "columnName": "extended" },
+        { "alias": "rsr_supplier", "columnName": "rsr_supplier" },
+        { "alias": "preferred_supplier_status", "columnName": "preferred_supplier_status" },
+        { "alias": "supplier_category", "columnName": "supplier_category" }
+      ]
+    }
+  ],
   "collectionsMapping": [
     {
       "name": "rate_card_history",
@@ -41,7 +96,18 @@
     },
     {
       "name": "rate_card_client_aliases",
-      "syncEnabled": false,
+      "schema": {
+        "columns": [
+          { "name": "uploadedClient", "type": "STRING" },
+          { "name": "normalizedKey", "type": "STRING" },
+          { "name": "clientCode", "type": "STRING" },
+          { "name": "accountName", "type": "STRING" },
+          { "name": "method", "type": "STRING" },
+          { "name": "score", "type": "DOUBLE" },
+          { "name": "confirmedAt", "type": "DATETIME" }
+        ]
+      },
+      "syncEnabled": true,
       "defaultPermission": ["read", "read_content", "create_content", "update_content", "delete_content"]
     }
   ],
