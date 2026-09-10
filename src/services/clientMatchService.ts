@@ -1,3 +1,4 @@
+import { asPercent, diceCoefficient, jaccard } from './stringSimilarity';
 import {
   ClientAlias,
   ClientDirectoryEntry,
@@ -82,107 +83,6 @@ export const tokenizeClientName = (raw: string): string[] => {
   return meaningful.length ? meaningful : tokens;
 };
 
-const bigramsOf = (value: string): string[] => {
-  const out: string[] = [];
-  for (let i = 0; i < value.length - 1; i += 1) out.push(value.slice(i, i + 2));
-  return out;
-};
-
-/**
- * Sørensen–Dice similarity over character bigrams. Catches typos and spacing
- * differences that token comparison misses — "wal mart" against "walmart".
- */
-const diceCoefficient = (a: string, b: string): number => {
-  if (a === b) return a ? 1 : 0;
-  if (a.length < 2 || b.length < 2) return 0;
-
-  const left = bigramsOf(a);
-  const right = bigramsOf(b);
-  const remaining = new Map<string, number>();
-  for (const gram of left) remaining.set(gram, (remaining.get(gram) ?? 0) + 1);
-
-  let hits = 0;
-  for (const gram of right) {
-    const count = remaining.get(gram) ?? 0;
-    if (count > 0) {
-      remaining.set(gram, count - 1);
-      hits += 1;
-    }
-  }
-  return (2 * hits) / (left.length + right.length);
-};
-
-const jaccard = (a: Set<string>, b: Set<string>): number => {
-  if (!a.size || !b.size) return 0;
-  let shared = 0;
-  for (const token of a) if (b.has(token)) shared += 1;
-  return shared / (a.size + b.size - shared);
-};
-
-/** Tokens that carry no initial — "and" in "Procter and Gamble" / "P and G". */
-const CONNECTOR_TOKENS = new Set(['and', 'of', 'the', 'for']);
-
-const significant = (tokens: string[]): string[] =>
-  tokens.filter((t) => !CONNECTOR_TOKENS.has(t));
-
-/**
- * Whether a name was written as an acronym in the source.
- *
- * Case is the signal that matters: "IBM", "P&G" and "AT&T" arrive capitalised,
- * while "Xerox" does not. Without this check a five-letter word was matched
- * against any five-word account name on its initials, which is nonsense.
- *
- * Names of three letters or fewer are allowed through regardless of case, so a
- * lowercase "ibm" still resolves.
- */
-const looksLikeAcronym = (raw: string, letters: string): boolean => {
-  if (letters.length < 2 || letters.length > 6) return false;
-  if (!/^[a-z]+$/.test(letters)) return false;
-  if (letters.length <= 3) return true;
-  const rawLetters = (raw || '').replace(/[^A-Za-z]/g, '');
-  return rawLetters.length > 0 && rawLetters === rawLetters.toUpperCase();
-};
-
-/**
- * If one side reads as the other's initials, return the expanded name and how
- * exact the fit was. `partial` covers an acronym that matches only the leading
- * initials — "HP" against "Hewlett Packard Enterprise" — which is worth
- * proposing but is weak evidence, since HP Inc and Hewlett Packard Enterprise
- * are in fact different companies.
- */
-const acronymMatch = (
-  aRaw: string,
-  a: string[],
-  bRaw: string,
-  b: string[]
-): { expanded: string; partial: boolean } | null => {
-  const check = (
-    shortRaw: string,
-    short: string[],
-    long: string[]
-  ): { expanded: string; partial: boolean } | null => {
-    const shortSig = significant(short);
-    const longSig = significant(long);
-
-    // The short side must be one word, or a run of single letters ("p g").
-    if (!(shortSig.length === 1 || shortSig.every((t) => t.length === 1))) return null;
-    if (longSig.length < 2) return null;
-
-    const letters = shortSig.join('');
-    if (!looksLikeAcronym(shortRaw, letters)) return null;
-
-    const initials = longSig.map((t) => t[0]).join('');
-    if (letters === initials) return { expanded: longSig.join(' '), partial: false };
-    if (initials.startsWith(letters) && letters.length >= 2) {
-      return { expanded: longSig.join(' '), partial: true };
-    }
-    return null;
-  };
-
-  return check(aRaw, a, b) ?? check(bRaw, b, a);
-};
-
-const asPercent = (value: number): string => `${Math.round(value * 100)}%`;
 
 /**
  * Score one uploaded name against one candidate, with the basis for the score.
@@ -265,6 +165,69 @@ export const scoreClientMatch = (
     score: blended,
     reason: `${asPercent(tokenScore)} of words and ${asPercent(charScore)} of characters in common`,
   };
+};
+
+/** Tokens that carry no initial — "and" in "Procter and Gamble" / "P and G". */
+const CONNECTOR_TOKENS = new Set(['and', 'of', 'the', 'for']);
+
+const significant = (tokens: string[]): string[] =>
+  tokens.filter((t) => !CONNECTOR_TOKENS.has(t));
+
+/**
+ * Whether a name was written as an acronym in the source.
+ *
+ * Case is the signal that matters: "IBM", "P&G" and "AT&T" arrive capitalised,
+ * while "Xerox" does not. Without this check a five-letter word was matched
+ * against any five-word account name on its initials, which is nonsense.
+ *
+ * Names of three letters or fewer are allowed through regardless of case, so a
+ * lowercase "ibm" still resolves.
+ */
+const looksLikeAcronym = (raw: string, letters: string): boolean => {
+  if (letters.length < 2 || letters.length > 6) return false;
+  if (!/^[a-z]+$/.test(letters)) return false;
+  if (letters.length <= 3) return true;
+  const rawLetters = (raw || '').replace(/[^A-Za-z]/g, '');
+  return rawLetters.length > 0 && rawLetters === rawLetters.toUpperCase();
+};
+
+/**
+ * If one side reads as the other's initials, return the expanded name and how
+ * exact the fit was. `partial` covers an acronym that matches only the leading
+ * initials — "HP" against "Hewlett Packard Enterprise" — which is worth
+ * proposing but is weak evidence, since HP Inc and Hewlett Packard Enterprise
+ * are in fact different companies.
+ */
+const acronymMatch = (
+  aRaw: string,
+  a: string[],
+  bRaw: string,
+  b: string[]
+): { expanded: string; partial: boolean } | null => {
+  const check = (
+    shortRaw: string,
+    short: string[],
+    long: string[]
+  ): { expanded: string; partial: boolean } | null => {
+    const shortSig = significant(short);
+    const longSig = significant(long);
+
+    // The short side must be one word, or a run of single letters ("p g").
+    if (!(shortSig.length === 1 || shortSig.every((t) => t.length === 1))) return null;
+    if (longSig.length < 2) return null;
+
+    const letters = shortSig.join('');
+    if (!looksLikeAcronym(shortRaw, letters)) return null;
+
+    const initials = longSig.map((t) => t[0]).join('');
+    if (letters === initials) return { expanded: longSig.join(' '), partial: false };
+    if (initials.startsWith(letters) && letters.length >= 2) {
+      return { expanded: longSig.join(' '), partial: true };
+    }
+    return null;
+  };
+
+  return check(aRaw, a, b) ?? check(bRaw, b, a);
 };
 
 /** Ranked candidates above the floor, best first. */

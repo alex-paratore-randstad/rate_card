@@ -4,6 +4,7 @@ import {
   ClientAlias,
   ClientDirectory,
   ClientDirectoryEntry,
+  TitleAlias,
 } from '../types/rateCard';
 import { countryKey } from './countryService';
 import { collapseDirectoryByClientCode } from './clientMatchService';
@@ -14,12 +15,15 @@ const COLLECTION_BATCHES = 'rate_card_batches';
 const COLLECTION_DIRECTORY = 'rate_card_client_directory';
 /** Confirmed uploaded-name to client-code pairings; one document each. */
 const COLLECTION_ALIASES = 'rate_card_client_aliases';
+/** Confirmed card-title to actuals-title pairings; one document each. */
+const COLLECTION_TITLE_ALIASES = 'rate_card_title_aliases';
 const COLLECTIONS_BASE = '/domo/datastores/v1/collections';
 
 const LOCAL_RECORDS_KEY = 'randstad_rate_cards';
 const LOCAL_BATCHES_KEY = 'randstad_batches';
 const LOCAL_DIRECTORY_KEY = 'randstad_client_directory';
 const LOCAL_ALIASES_KEY = 'randstad_client_aliases';
+const LOCAL_TITLE_ALIASES_KEY = 'randstad_title_aliases';
 
 /** How many collection writes to keep in flight at once. */
 const WRITE_CONCURRENCY = 25;
@@ -585,5 +589,131 @@ export const deleteClientAlias = async (alias: ClientAlias): Promise<void> => {
   localStorage.setItem(
     LOCAL_ALIASES_KEY,
     JSON.stringify(stored.filter((a) => a.normalizedKey !== alias.normalizedKey))
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Title Aliases
+//
+// Same shape as the client aliases, keyed on client code plus normalized card
+// title. Kept in its own collection rather than sharing one: the volume is an
+// order of magnitude higher, and a title decision has no meaning without the
+// client it was made for.
+// ---------------------------------------------------------------------------
+
+const isUsableTitleAlias = (alias: any): boolean =>
+  !!alias &&
+  typeof alias.cardTitleKey === 'string' &&
+  alias.cardTitleKey !== '' &&
+  typeof alias.clientCode === 'string' &&
+  alias.clientCode !== '';
+
+export const fetchTitleAliases = async (): Promise<TitleAlias[]> => {
+  if ((await probeDomoAccess()) !== 'none') {
+    try {
+      const docs = await domoGet(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_ALIASES}/documents/`);
+      return unwrapWithIds<TitleAlias>(docs)
+        .filter((d) => isUsableTitleAlias(d.content))
+        .map((d) => ({ ...d.content, id: d.id }));
+    } catch (error) {
+      console.error('[Domo Collections] Failed to fetch title aliases:', error);
+      throw error;
+    }
+  }
+
+  const localData = localStorage.getItem(LOCAL_TITLE_ALIASES_KEY);
+  if (localData) {
+    try {
+      return (JSON.parse(localData) as any[]).filter(isUsableTitleAlias) as TitleAlias[];
+    } catch {
+      // ignore parse errors
+    }
+  }
+  return [];
+};
+
+/**
+ * Store one title decision, replacing any earlier one for the same client and
+ * card title. Returns the alias with its Domo document id.
+ */
+export const saveTitleAlias = async (alias: TitleAlias): Promise<TitleAlias> => {
+  const aliasKey = `${alias.clientCode}||${alias.cardTitleKey}`;
+
+  if ((await probeDomoAccess()) !== 'none') {
+    const { id, ...content } = alias;
+
+    if (id) {
+      await domoPut(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_ALIASES}/documents/${id}`, { content });
+      return alias;
+    }
+
+    const existing = (await fetchTitleAliases()).find(
+      (a) => `${a.clientCode}||${a.cardTitleKey}` === aliasKey
+    );
+    if (existing?.id) {
+      await domoPut(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_ALIASES}/documents/${existing.id}`, {
+        content,
+      });
+      return { ...alias, id: existing.id };
+    }
+
+    const created = await domoPost(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_ALIASES}/documents/`, {
+      content,
+    });
+    return { ...alias, id: String(created?.id ?? '') };
+  }
+
+  const stored = await fetchTitleAliases();
+  const localId = alias.id || `local-${aliasKey}`;
+  const next = [
+    { ...alias, id: localId },
+    ...stored.filter((a) => `${a.clientCode}||${a.cardTitleKey}` !== aliasKey),
+  ];
+  localStorage.setItem(LOCAL_TITLE_ALIASES_KEY, JSON.stringify(next));
+  return { ...alias, id: localId };
+};
+
+/**
+ * Store several decisions at once.
+ *
+ * Bulk acceptance is the normal case here, not the exception — a card can carry
+ * hundreds of titles and most resolve exactly. Writes run sequentially because
+ * each read-back guards against creating a second decision for one title;
+ * `saved` reports what actually landed rather than what was attempted.
+ */
+export const saveTitleAliases = async (
+  aliases: TitleAlias[]
+): Promise<{ saved: TitleAlias[]; failed: number; firstError?: string }> => {
+  const saved: TitleAlias[] = [];
+  let failed = 0;
+  let firstError: string | undefined;
+
+  for (const alias of aliases) {
+    try {
+      saved.push(await saveTitleAlias(alias));
+    } catch (error: any) {
+      failed += 1;
+      firstError = firstError ?? String(error?.message ?? error);
+    }
+  }
+  if (failed) {
+    console.warn(`[Domo Collections] ${failed} title alias write(s) failed. First: ${firstError}`);
+  }
+  return { saved, failed, firstError };
+};
+
+/** Undo a title decision so it returns to the queue. */
+export const deleteTitleAlias = async (alias: TitleAlias): Promise<void> => {
+  if ((await probeDomoAccess()) !== 'none') {
+    if (!alias.id) return;
+    await domoDelete(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_ALIASES}/documents/${alias.id}`);
+    return;
+  }
+
+  const stored = await fetchTitleAliases();
+  const aliasKey = `${alias.clientCode}||${alias.cardTitleKey}`;
+  localStorage.setItem(
+    LOCAL_TITLE_ALIASES_KEY,
+    JSON.stringify(stored.filter((a) => `${a.clientCode}||${a.cardTitleKey}` !== aliasKey))
   );
 };

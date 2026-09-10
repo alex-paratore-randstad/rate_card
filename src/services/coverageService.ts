@@ -1,8 +1,9 @@
 import { AssignmentActualRow } from '../types/domoDatasets';
-import { ClientAlias, RateCardRecord } from '../types/rateCard';
+import { ClientAlias, RateCardRecord, TitleAlias } from '../types/rateCard';
 import { clientCodeFor } from './clientMatchService';
 import { countryKey, describeCountry } from './countryService';
 import { normalizeJobTitle } from './titleService';
+import { actualTitleKeyFor } from './titleMatchService';
 
 /**
  * Card coverage: which work a rate card actually governs.
@@ -99,6 +100,7 @@ export const buildCoverageReport = (
   cards: RateCardRecord[],
   actuals: AssignmentActualRow[],
   aliases: ClientAlias[],
+  titleAliases: TitleAlias[] = [],
   requestedYear?: string
 ): CoverageReport => {
   const availableYears = Array.from(new Set(cards.map((c) => c.rateYear).filter(Boolean))).sort();
@@ -142,7 +144,14 @@ export const buildCoverageReport = (
     const titleKey = normalizeJobTitle(card.jobTitle || '');
     if (!titleKey) continue;
 
-    const key = `${code}||${titleKey}`;
+    // A confirmed title match redirects the card onto the actuals title it was
+    // paired with. Without this the matcher would have no effect on the report
+    // it exists to improve. Two card titles resolving to one actuals title
+    // merge here, which widens the band — the same treatment duplicate card
+    // rows already get.
+    const joinKey = actualTitleKeyFor(code, card.jobTitle || '', titleAliases) ?? titleKey;
+
+    const key = `${code}||${joinKey}`;
     const existing = cardByKey.get(key);
     if (existing) {
       // Several card rows for one title — different labor types, or a country
@@ -155,7 +164,7 @@ export const buildCoverageReport = (
       cardByKey.set(key, {
         clientCode: code,
         clientLabel: clientName,
-        titleKey,
+        titleKey: joinKey,
         title: card.jobTitle,
         laborType: card.laborType,
         minRate: card.minRate,

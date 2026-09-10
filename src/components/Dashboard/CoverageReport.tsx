@@ -37,13 +37,21 @@ export const CoverageReport: React.FC = () => {
     assignmentActuals,
     actualsLoading,
     loadAssignmentActuals,
+    titleAliases,
   } = useRateCard();
 
   const [year, setYear] = useState<string | undefined>(undefined);
 
   const report = useMemo(
-    () => buildCoverageReport(scopedRateCards, assignmentActuals ?? [], clientAliases, year),
-    [scopedRateCards, assignmentActuals, clientAliases, year]
+    () =>
+      buildCoverageReport(
+        scopedRateCards,
+        assignmentActuals ?? [],
+        clientAliases,
+        titleAliases,
+        year
+      ),
+    [scopedRateCards, assignmentActuals, clientAliases, titleAliases, year]
   );
 
   const uncovered = report.rows.filter((r) => r.state === 'actuals-only');
@@ -142,10 +150,10 @@ export const CoverageReport: React.FC = () => {
             <div className="status-pill warning" style={{ width: '100%', padding: '12px 16px' }}>
               <AlertTriangle size={16} />
               <span>
-                Titles join on exact spelling only — abbreviations and levels are normalised, but
-                nothing more. Until the title matcher exists, a row under &ldquo;no card row&rdquo;
-                may be a title that failed to match rather than work nobody priced. Treat the
-                unmatched lists as a queue to review, not as a finding.
+                Titles join on exact spelling or a confirmed match. A row under &ldquo;no card
+                row&rdquo; may still be a title nobody has paired yet rather than work nobody
+                priced — resolve the queue on the Title Matching tab, and what remains here is a
+                finding rather than a to-do.
               </span>
             </div>
 

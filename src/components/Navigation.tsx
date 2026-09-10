@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, FileUp, Database, Link2, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, FileUp, Database, Link2, ShieldCheck, Tags } from 'lucide-react';
 import { useRateCard } from '../context/RateCardContext';
 
 export const Navigation: React.FC = () => {
@@ -29,6 +29,14 @@ export const Navigation: React.FC = () => {
       >
         <Link2 size={18} />
         <span>Client Matching</span>
+      </button>
+
+      <button
+        className={`nav-tab-button ${activeTab === 'titles' ? 'active' : ''}`}
+        onClick={() => setActiveTab('titles')}
+      >
+        <Tags size={18} />
+        <span>Title Matching</span>
       </button>
 
       <button

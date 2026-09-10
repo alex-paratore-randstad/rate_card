@@ -9,6 +9,8 @@ import {
   ClientDirectoryEntry,
   ClientMatchMethod,
   ClientResolution,
+  TitleAlias,
+  TitleMatchMethod,
 } from '../types/rateCard';
 import {
   fetchHistoricalRateCards,
@@ -22,6 +24,9 @@ import {
   fetchClientAliases,
   saveClientAlias,
   deleteClientAlias,
+  fetchTitleAliases,
+  saveTitleAliases,
+  deleteTitleAlias,
 } from '../services/domoService';
 import { normalizeClientName, resolveClients } from '../services/clientMatchService';
 import {
@@ -30,6 +35,7 @@ import {
 } from '../services/datasetService';
 import { AssignmentActualRow } from '../types/domoDatasets';
 import { countryKey } from '../services/countryService';
+import { normalizeJobTitle } from '../services/titleService';
 import { toDomoDateTime } from '../utils/formatters';
 
 interface RateCardContextType {
@@ -40,8 +46,8 @@ interface RateCardContextType {
   /** currentRateCards narrowed by the client and country scope. */
   scopedRateCards: RateCardRecord[];
   batches: NormalizedIngestionBatch[];
-  activeTab: 'dashboard' | 'ingest' | 'clients' | 'coverage' | 'collection';
-  setActiveTab: (tab: 'dashboard' | 'ingest' | 'clients' | 'coverage' | 'collection') => void;
+  activeTab: 'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'collection';
+  setActiveTab: (tab: 'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'collection') => void;
   previewData: IngestionPreviewData | null;
   setPreviewData: (data: IngestionPreviewData | null) => void;
   filters: RateCardFilterState;
@@ -67,6 +73,21 @@ interface RateCardContextType {
   ) => Promise<void>;
   /** Send a client back to the review list. */
   unresolveClient: (uploadedClient: string) => Promise<void>;
+  /** Confirmed card-title to actuals-title pairings. */
+  titleAliases: TitleAlias[];
+  /** Record one or many title decisions. Bulk is the normal case here. */
+  resolveTitleMatches: (
+    decisions: {
+      clientCode: string;
+      cardTitle: string;
+      actualTitle: string;
+      actualTitleKey: string;
+      method: TitleMatchMethod;
+      score: number;
+    }[]
+  ) => Promise<void>;
+  /** Send a title back to the queue. */
+  unresolveTitle: (clientCode: string, cardTitle: string) => Promise<void>;
   /** Assignment actuals, or null until loaded. Fetched on demand, not at boot. */
   assignmentActuals: AssignmentActualRow[] | null;
   /** Null while idle, true while the fetch is in flight. */
@@ -92,7 +113,7 @@ const RateCardContext = createContext<RateCardContextType | undefined>(undefined
 export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [rateCards, setRateCards] = useState<RateCardRecord[]>([]);
   const [batches, setBatches] = useState<NormalizedIngestionBatch[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'clients' | 'coverage' | 'collection'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'collection'>('dashboard');
   const [previewData, setPreviewData] = useState<IngestionPreviewData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [notificationMessage, setNotificationMessage] = useState<
@@ -103,6 +124,7 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [actualsLoading, setActualsLoading] = useState<boolean>(false);
   const [clientDirectory, setClientDirectory] = useState<ClientDirectory | null>(null);
   const [clientAliases, setClientAliases] = useState<ClientAlias[]>([]);
+  const [titleAliases, setTitleAliases] = useState<TitleAlias[]>([]);
 
   const [filters, setFilters] = useState<RateCardFilterState>({ client: 'ALL', country: 'ALL' });
   const [domoAccess, setDomoAccess] = useState<DomoAccess | null>(null);
@@ -119,12 +141,14 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       // provisioned yet the reports must still load, so these failures are
       // logged rather than thrown.
       try {
-        const [directory, aliases] = await Promise.all([
+        const [directory, aliases, titles] = await Promise.all([
           fetchClientDirectory(),
           fetchClientAliases(),
+          fetchTitleAliases(),
         ]);
         setClientDirectory(directory);
         setClientAliases(aliases);
+        setTitleAliases(titles);
       } catch (err) {
         console.warn('[Client matching] Could not load the directory or aliases:', err);
       }
@@ -378,6 +402,87 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   /**
+   * Record title decisions.
+   *
+   * Takes a list rather than one at a time because accepting in bulk is the
+   * normal path — a card carries hundreds of titles and most resolve exactly,
+   * so a one-at-a-time API would make the common case the slow one. Partial
+   * failure is reported rather than swallowed: the decisions that landed are
+   * kept, and the count that did not is surfaced.
+   */
+  const resolveTitleMatches: RateCardContextType['resolveTitleMatches'] = async (decisions) => {
+    if (!decisions.length) return;
+
+    const now = toDomoDateTime();
+    const prepared: TitleAlias[] = decisions.map((d) => {
+      const cardTitleKey = normalizeJobTitle(d.cardTitle);
+      const existing = titleAliases.find(
+        (a) => a.clientCode === d.clientCode && a.cardTitleKey === cardTitleKey
+      );
+      return {
+        id: existing?.id || '',
+        clientCode: d.clientCode,
+        cardTitle: d.cardTitle,
+        cardTitleKey,
+        actualTitle: d.method === 'none' ? '' : d.actualTitle,
+        actualTitleKey: d.method === 'none' ? '' : d.actualTitleKey,
+        method: d.method,
+        score: d.score,
+        confirmedAt: now,
+      };
+    });
+
+    try {
+      const { saved, failed, firstError } = await saveTitleAliases(prepared);
+      if (saved.length) {
+        const savedKeys = new Set(saved.map((a) => `${a.clientCode}||${a.cardTitleKey}`));
+        setTitleAliases((prev) => [
+          ...saved,
+          ...prev.filter((a) => !savedKeys.has(`${a.clientCode}||${a.cardTitleKey}`)),
+        ]);
+      }
+      if (failed) {
+        setNotificationMessage({
+          type: 'error',
+          text:
+            `Saved ${saved.length} of ${prepared.length} title matches; ${failed} failed.` +
+            (firstError ? ` First error: ${firstError}` : ''),
+        });
+      } else if (prepared.length > 1) {
+        setNotificationMessage({
+          type: 'success',
+          text: `Saved ${saved.length} title matches.`,
+        });
+      }
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not save the title matches: ${err?.message || 'unknown error'}`,
+      });
+    }
+  };
+
+  const unresolveTitle = async (clientCode: string, cardTitle: string) => {
+    const cardTitleKey = normalizeJobTitle(cardTitle);
+    const existing = titleAliases.find(
+      (a) => a.clientCode === clientCode && a.cardTitleKey === cardTitleKey
+    );
+    if (!existing) return;
+
+    try {
+      await deleteTitleAlias(existing);
+      setTitleAliases((prev) =>
+        prev.filter((a) => !(a.clientCode === clientCode && a.cardTitleKey === cardTitleKey))
+      );
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not clear the title match: ${err?.message || 'unknown error'}`,
+      });
+    }
+  };
+
+  /**
    * Fetch the assignment actuals.
    *
    * Deliberately on demand rather than at boot: this is the one large read in
@@ -449,6 +554,9 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         loadClientDirectoryFromDomo,
         resolveClient,
         unresolveClient,
+        titleAliases,
+        resolveTitleMatches,
+        unresolveTitle,
         assignmentActuals,
         actualsLoading,
         loadAssignmentActuals,

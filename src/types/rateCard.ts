@@ -207,3 +207,104 @@ export interface ClientResolution {
   alias?: ClientAlias;
   suggestions: ClientMatchSuggestion[];
 }
+
+// ---------------------------------------------------------------------------
+// Title matching
+//
+// The same shape of problem as client matching, at a different scale. A client
+// list is a handful of names resolved once; a title list is hundreds per
+// client, so the queue has to be ordered by what is at stake and the obvious
+// matches have to clear in bulk. There are also signals a client name does not
+// have: two titles sharing an occupational code is evidence, and a candidate
+// whose actual pay sits nowhere near the card band is evidence against.
+// ---------------------------------------------------------------------------
+
+/**
+ * One title as it appears in the actuals, aggregated across its assignments.
+ *
+ * Derived from the assignment dataset already loaded for the coverage report
+ * rather than from `rate_card_title_directory` — the numbers then cannot
+ * disagree with the report the matcher exists to improve, and it needs no
+ * second dataset mapping.
+ */
+export interface TitleCandidate {
+  /** Normalized form; the join key. */
+  titleKey: string;
+  /** `title_cleaned` as Domo holds it. */
+  title: string;
+  clientCode: string;
+  assignments: number;
+  hours: number;
+  /** Hours-weighted pay rate across the candidate's assignments. */
+  weightedPayRate?: number;
+  minPayRate?: number;
+  maxPayRate?: number;
+  /** Occupational codes, for matching a title to its peers by more than spelling. */
+  socBroadGroup?: string;
+  onetOccupation?: string;
+  msCategory?: string;
+  currencies: string[];
+}
+
+/** How a title pairing was arrived at. */
+export type TitleMatchMethod = 'exact' | 'confirmed' | 'manual' | 'none';
+
+/**
+ * A confirmed pairing between a card title and an actuals title, for one client.
+ *
+ * Scoped per client rather than globally. A spelling equivalence would often
+ * hold everywhere, but "Analyst" need not mean the same role at two accounts,
+ * and the candidate list differs per client anyway — so the safe scope is the
+ * one the report joins on.
+ */
+export interface TitleAlias {
+  /** Domo collection document id. */
+  id: string;
+  clientCode: string;
+  /** The card's title, exactly as uploaded. */
+  cardTitle: string;
+  /** Normalized card title; the lookup key alongside clientCode. */
+  cardTitleKey: string;
+  /** The actuals title this resolves to. Empty when method is 'none'. */
+  actualTitle: string;
+  actualTitleKey: string;
+  method: TitleMatchMethod;
+  score: number;
+  confirmedAt: string;
+}
+
+/** A scored title candidate, with the basis shown to the reviewer. */
+export interface TitleMatchSuggestion {
+  candidate: TitleCandidate;
+  score: number;
+  reason: string;
+  /** True when the candidate's actual pay overlaps the card band. */
+  bandOverlaps?: boolean;
+}
+
+export type TitleResolutionState =
+  | 'resolved'
+  | 'suggested'
+  | 'ambiguous'
+  | 'unmatched'
+  /** No candidates loaded, so nothing could be scored. */
+  | 'pending';
+
+/** One row of the title matching queue. */
+export interface TitleResolution {
+  clientCode: string;
+  clientLabel: string;
+  cardTitle: string;
+  cardTitleKey: string;
+  cardMinRate: number;
+  cardMaxRate: number;
+  /**
+   * Hours behind the best unresolved candidate — what resolving this row would
+   * bring into coverage. The queue is ordered by it, so the expensive titles
+   * are reviewed first rather than whatever sorts alphabetically.
+   */
+  hoursAtStake: number;
+  state: TitleResolutionState;
+  alias?: TitleAlias;
+  suggestions: TitleMatchSuggestion[];
+}

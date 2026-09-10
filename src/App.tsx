@@ -9,6 +9,7 @@ import { ColumnMappingModal } from './components/Ingestion/ColumnMappingModal';
 import { DatasetViewer } from './components/Collection/DatasetViewer';
 import { ClientMatchPanel } from './components/Clients/ClientMatchPanel';
 import { CoverageReport } from './components/Dashboard/CoverageReport';
+import { TitleMatchPanel } from './components/Clients/TitleMatchPanel';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -71,6 +72,15 @@ const MainLayout: React.FC = () => {
         {activeTab === 'ingest' && <FileUploader />}
 
         {activeTab === 'clients' && <ClientMatchPanel />}
+
+        {/* Title matching scores against actuals in the same scope, so it takes
+            the scope bar too. */}
+        {activeTab === 'titles' && (
+          <>
+            <ClientScopeBar />
+            <TitleMatchPanel />
+          </>
+        )}
 
         {/* Coverage reads the same client/country scope as the dashboard, so the
             scope bar comes along rather than being duplicated. */}
