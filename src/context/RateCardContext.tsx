@@ -24,6 +24,7 @@ import {
   deleteClientAlias,
 } from '../services/domoService';
 import { normalizeClientName, resolveClients } from '../services/clientMatchService';
+import { fetchClientDirectoryFromDataset } from '../services/datasetService';
 import { toDomoDateTime } from '../utils/formatters';
 
 interface RateCardContextType {
@@ -50,6 +51,8 @@ interface RateCardContextType {
   clientResolutions: ClientResolution[];
   /** Replace the candidate list. */
   loadClientDirectory: (entries: ClientDirectoryEntry[], source: ClientDirectory['source']) => Promise<void>;
+  /** Replace it from the mapped Domo dataset rather than a paste. */
+  loadClientDirectoryFromDomo: () => Promise<void>;
   /** Record a decision for one uploaded client. */
   resolveClient: (
     uploadedClient: string,
@@ -256,6 +259,42 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   /**
+   * Load the candidate list from the mapped dataset.
+   *
+   * Preferred over pasting once the app is published: the paste path exists
+   * because dataset mappings only take effect on publish, so there had to be a
+   * way to work before one had happened.
+   */
+  const loadClientDirectoryFromDomo = async () => {
+    try {
+      const { entries, source, skipped } = await fetchClientDirectoryFromDataset();
+      if (!entries.length) {
+        setNotificationMessage({
+          type: 'error',
+          text: 'The client directory dataset returned no usable rows.',
+        });
+        return;
+      }
+      await loadClientDirectory(entries, 'dataset');
+      if (source === 'local-seed' || skipped) {
+        setNotificationMessage({
+          type: 'info',
+          text:
+            `Loaded ${entries.length} candidate clients` +
+            (source === 'local-seed' ? ' from locally seeded rows, not from Domo' : '') +
+            (skipped ? `; skipped ${skipped} row(s) missing a code or name` : '') +
+            '.',
+        });
+      }
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not read the client directory dataset: ${err?.message || 'unknown error'}`,
+      });
+    }
+  };
+
+  /**
    * Record how one uploaded client string maps onto Domo. A null `choice`
    * records that there is no counterpart, which is a real answer — it stops the
    * client being offered for review again.
@@ -349,6 +388,7 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         clientAliases,
         clientResolutions,
         loadClientDirectory,
+        loadClientDirectoryFromDomo,
         resolveClient,
         unresolveClient,
         ingestNewBatch,

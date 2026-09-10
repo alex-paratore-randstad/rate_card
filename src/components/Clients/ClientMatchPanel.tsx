@@ -8,6 +8,7 @@ import {
   Wand2,
   RotateCcw,
   Ban,
+  DatabaseZap,
 } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
 import {
@@ -52,8 +53,10 @@ export const ClientMatchPanel: React.FC = () => {
     clientDirectory,
     clientResolutions,
     loadClientDirectory,
+    loadClientDirectoryFromDomo,
     resolveClient,
     unresolveClient,
+    domoAccess,
   } = useRateCard();
 
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -127,9 +130,29 @@ export const ClientMatchPanel: React.FC = () => {
                 <span>Accept {auto.length} exact {auto.length === 1 ? 'match' : 'matches'}</span>
               </button>
             )}
+            <button
+              className="btn-secondary"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await loadClientDirectoryFromDomo();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              title={
+                domoAccess === 'none'
+                  ? 'Outside Domo the dataset is unreachable unless rows have been seeded locally'
+                  : 'Read rate_card_client_directory from Domo'
+              }
+            >
+              <DatabaseZap size={16} />
+              <span>Load from Domo</span>
+            </button>
             <button className="btn-secondary" onClick={() => setPasteOpen((v) => !v)}>
               <Upload size={16} />
-              <span>{clientDirectory ? 'Replace candidate list' : 'Load candidate list'}</span>
+              <span>{clientDirectory ? 'Replace by paste' : 'Paste candidate list'}</span>
             </button>
           </div>
         </div>
