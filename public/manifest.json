@@ -121,6 +121,26 @@
           "columnName": "bill_rate_st_hr"
         },
         {
+          "alias": "pay_rate_st_hr_usd",
+          "columnName": "pay_rate_st_hr_usd"
+        },
+        {
+          "alias": "pay_rate_st_hr_cad",
+          "columnName": "pay_rate_st_hr_cad"
+        },
+        {
+          "alias": "pay_rate_st_hr_eur",
+          "columnName": "pay_rate_st_hr_eur"
+        },
+        {
+          "alias": "pay_rate_st_hr_gbp",
+          "columnName": "pay_rate_st_hr_gbp"
+        },
+        {
+          "alias": "pay_rate_st_hr_inr",
+          "columnName": "pay_rate_st_hr_inr"
+        },
+        {
           "alias": "max_template_bill_rate_st_hr",
           "columnName": "max_template_bill_rate_st_hr"
         },
@@ -279,18 +299,48 @@
       "name": "rate_card_title_aliases",
       "schema": {
         "columns": [
-          { "name": "clientCode", "type": "STRING" },
-          { "name": "cardTitle", "type": "STRING" },
-          { "name": "cardTitleKey", "type": "STRING" },
-          { "name": "actualTitle", "type": "STRING" },
-          { "name": "actualTitleKey", "type": "STRING" },
-          { "name": "method", "type": "STRING" },
-          { "name": "score", "type": "DOUBLE" },
-          { "name": "confirmedAt", "type": "DATETIME" }
+          {
+            "name": "clientCode",
+            "type": "STRING"
+          },
+          {
+            "name": "cardTitle",
+            "type": "STRING"
+          },
+          {
+            "name": "cardTitleKey",
+            "type": "STRING"
+          },
+          {
+            "name": "actualTitle",
+            "type": "STRING"
+          },
+          {
+            "name": "actualTitleKey",
+            "type": "STRING"
+          },
+          {
+            "name": "method",
+            "type": "STRING"
+          },
+          {
+            "name": "score",
+            "type": "DOUBLE"
+          },
+          {
+            "name": "confirmedAt",
+            "type": "DATETIME"
+          }
         ]
       },
       "syncEnabled": true,
-      "defaultPermission": ["read", "read_content", "create_content", "update_content", "delete_content"]
+      "defaultPermission": [
+        "read",
+        "read_content",
+        "create_content",
+        "update_content",
+        "delete_content"
+      ]
     },
     {
       "name": "rate_card_client_aliases",

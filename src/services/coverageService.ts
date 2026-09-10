@@ -1,7 +1,7 @@
-import { AssignmentActualRow } from '../types/domoDatasets';
+import { AssignmentActualRow, payRateFieldFor } from '../types/domoDatasets';
 import { ClientAlias, RateCardRecord, TitleAlias } from '../types/rateCard';
 import { clientCodeFor } from './clientMatchService';
-import { countryKey, describeCountry } from './countryService';
+import { countryKey, currencyForCountry, describeCountry } from './countryService';
 import { normalizeJobTitle } from './titleService';
 import { actualTitleKeyFor } from './titleMatchService';
 
@@ -115,6 +115,8 @@ export const buildCoverageReport = (
   const codeToLabel = new Map<string, string>();
   const scopeKeys = new Set<string>(); // `${clientCode}||${countryKey}`
   const countries = new Set<string>();
+  /** Comparison currency per country in scope, inferred from the country. */
+  const currencyByCountry = new Map<string, string | null>();
 
   interface CardAgg {
     clientCode: string;
@@ -140,6 +142,9 @@ export const buildCoverageReport = (
     const country = countryKey(card.country || '');
     countries.add(country);
     scopeKeys.add(`${code}||${country}`);
+    if (!currencyByCountry.has(country)) {
+      currencyByCountry.set(country, currencyForCountry(card.country || ''));
+    }
 
     const titleKey = normalizeJobTitle(card.jobTitle || '');
     if (!titleKey) continue;
@@ -217,6 +222,17 @@ export const buildCoverageReport = (
       continue;
     }
 
+    // Compare in the currency the card is priced in, using the source's own
+    // conversion. Falling back to the raw local rate only when no converted
+    // column exists — and then the row's own currency is what gets reported,
+    // so a mixed scope still raises the warning rather than averaging quietly.
+    const comparisonCurrency = currencyByCountry.get(country) ?? null;
+    const field = comparisonCurrency ? payRateFieldFor(comparisonCurrency) : null;
+    const converted = field ? (row[field] as number | null) : null;
+    const rate = typeof converted === 'number' ? converted : row.pay_rate_st_hr;
+    const rateCurrency =
+      typeof converted === 'number' ? comparisonCurrency! : row.currency;
+
     considered += 1;
     const key = `${code}||${titleKey}`;
     let agg = actualByKey.get(key);
@@ -234,8 +250,11 @@ export const buildCoverageReport = (
     }
     agg.assignments.add(row.assignment_unique_key);
     agg.hours += hours;
-    agg.payDollars += typeof row.pay_dollars === 'number' ? row.pay_dollars : 0;
-    if (row.currency) agg.currencies.add(row.currency);
+    // Recomputed rather than taking the ETL's pay_dollars: that column is
+    // rate x hours in the *local* currency, so using it here would mix a
+    // converted rate with unconverted dollars.
+    agg.payDollars += (typeof rate === 'number' ? rate : 0) * hours;
+    if (rateCurrency) agg.currencies.add(rateCurrency);
   }
 
   // --- outer join ---------------------------------------------------------

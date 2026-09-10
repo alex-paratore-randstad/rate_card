@@ -1,4 +1,4 @@
-import { AssignmentActualRow } from '../types/domoDatasets';
+import { AssignmentActualRow, payRateFieldFor } from '../types/domoDatasets';
 import {
   RateCardRecord,
   TitleAlias,
@@ -68,8 +68,22 @@ const BAND_TOLERANCE = 0.35;
  */
 export const buildTitleCandidates = (
   actuals: AssignmentActualRow[],
-  scope: { clientCodes: Set<string>; countries: Set<string>; rateYear: string }
+  scope: {
+    clientCodes: Set<string>;
+    countries: Set<string>;
+    rateYear: string;
+    /**
+     * The currency the card is priced in. Candidate rates are reported in it
+     * using the source's own conversion, so the band signal compares like with
+     * like — a CAD rate against a USD band would otherwise read as a mismatch
+     * on every row.
+     */
+     comparisonCurrency?: string | null;
+  }
 ): TitleCandidate[] => {
+  const rateField = scope.comparisonCurrency
+    ? payRateFieldFor(scope.comparisonCurrency)
+    : null;
   interface Agg {
     candidate: TitleCandidate;
     assignments: Set<string>;
@@ -119,11 +133,23 @@ export const buildTitleCandidates = (
       byKey.set(key, agg);
     }
 
+    // The rate to compare in: the card's currency where the source carries a
+    // conversion, otherwise the raw local rate. Resolved before any
+    // aggregation so every measure below is in one currency.
+    const converted = rateField ? (row[rateField] as number | null) : null;
+    const rate =
+      typeof converted === 'number'
+        ? converted
+        : typeof row.pay_rate_st_hr === 'number'
+        ? row.pay_rate_st_hr
+        : undefined;
+
     agg.assignments.add(row.assignment_unique_key);
     agg.candidate.hours += hours;
-    agg.payDollars += typeof row.pay_dollars === 'number' ? row.pay_dollars : 0;
+    // Recomputed from the comparison rate rather than the ETL's pay_dollars,
+    // which is rate x hours in the local currency.
+    agg.payDollars += (rate ?? 0) * hours;
 
-    const rate = typeof row.pay_rate_st_hr === 'number' ? row.pay_rate_st_hr : undefined;
     if (rate !== undefined) {
       agg.candidate.minPayRate =
         agg.candidate.minPayRate === undefined ? rate : Math.min(agg.candidate.minPayRate, rate);
@@ -134,8 +160,10 @@ export const buildTitleCandidates = (
     vote(agg.soc, row.soc_broad_group, hours);
     vote(agg.onet, row.onet_detailed_occupation, hours);
     vote(agg.ms, row.ms_category_1, hours);
-    if (row.currency && !agg.candidate.currencies.includes(row.currency)) {
-      agg.candidate.currencies.push(row.currency);
+    const reported =
+      typeof converted === 'number' ? scope.comparisonCurrency! : row.currency;
+    if (reported && !agg.candidate.currencies.includes(reported)) {
+      agg.candidate.currencies.push(reported);
     }
   }
 

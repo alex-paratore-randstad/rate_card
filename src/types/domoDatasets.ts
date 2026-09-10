@@ -79,9 +79,23 @@ export interface AssignmentActualRow {
   rsr_region: string;
 
   // --- rates ---
+  /** In `currency`, not normalized. Prefer a per-currency column for comparison. */
   pay_rate_st_hr: number;
   pay_rate_st_hr_initial: number;
   bill_rate_st_hr: number;
+
+  /**
+   * The same pay rate converted by the source's own FX rates.
+   *
+   * These are what make a card comparison correct: a card is priced in one
+   * currency, and comparing it to a rate in another produces a violation that
+   * is really an exchange rate. Null where the source had no rate to convert.
+   */
+  pay_rate_st_hr_usd: number | null;
+  pay_rate_st_hr_cad: number | null;
+  pay_rate_st_hr_eur: number | null;
+  pay_rate_st_hr_gbp: number | null;
+  pay_rate_st_hr_inr: number | null;
   /** The ceiling the VMS enforces, for reconciling against the uploaded card. */
   max_template_bill_rate_st_hr: number;
   /**
@@ -138,6 +152,8 @@ export const EXPECTED_COLUMNS: Record<DatasetAlias, string[]> = {
     'rsr_labor_type', 'contingent_vs_sow', 'collar_type', 'specialization',
     'rsr_country', 'state_province', 'city', 'market', 'rsr_region',
     'pay_rate_st_hr', 'pay_rate_st_hr_initial', 'bill_rate_st_hr',
+    'pay_rate_st_hr_usd', 'pay_rate_st_hr_cad', 'pay_rate_st_hr_eur',
+    'pay_rate_st_hr_gbp', 'pay_rate_st_hr_inr',
     'max_template_bill_rate_st_hr', 'compliance_vs_max_template_bill_rate',
     'card_year', 'pay_drift', 'pay_drift_pct',
     'pay_dollars', 'bill_dollars', 'hours_to_date',
@@ -147,12 +163,35 @@ export const EXPECTED_COLUMNS: Record<DatasetAlias, string[]> = {
   ],
 };
 
+/**
+ * Currencies the actuals carry a converted pay rate for.
+ *
+ * A card priced in anything else cannot be compared numerically, and the
+ * report says so rather than falling back to USD — a silent currency
+ * substitution turns an exchange rate into a compliance finding.
+ */
+export const CONVERTED_CURRENCIES = ['USD', 'CAD', 'EUR', 'GBP', 'INR'] as const;
+
+export type ConvertedCurrency = (typeof CONVERTED_CURRENCIES)[number];
+
+/** The row field holding the pay rate in a given currency, or null if absent. */
+export const payRateFieldFor = (
+  currency: string
+): keyof AssignmentActualRow | null => {
+  const upper = (currency || '').trim().toUpperCase();
+  return (CONVERTED_CURRENCIES as readonly string[]).includes(upper)
+    ? (`pay_rate_st_hr_${upper.toLowerCase()}` as keyof AssignmentActualRow)
+    : null;
+};
+
 /** Numeric columns per dataset. Domo may return these as strings. */
 export const NUMERIC_COLUMNS: Record<DatasetAlias, string[]> = {
   [DATASET_ALIASES.clientDirectory]: ['hours_sum'],
   [DATASET_ALIASES.assignmentActuals]: [
     'snapshot_months',
     'pay_rate_st_hr', 'pay_rate_st_hr_initial', 'bill_rate_st_hr',
+    'pay_rate_st_hr_usd', 'pay_rate_st_hr_cad', 'pay_rate_st_hr_eur',
+    'pay_rate_st_hr_gbp', 'pay_rate_st_hr_inr',
     'max_template_bill_rate_st_hr',
     'pay_drift', 'pay_drift_pct',
     'pay_dollars', 'bill_dollars', 'hours_to_date',

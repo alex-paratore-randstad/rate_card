@@ -19,7 +19,7 @@ import {
   AUTO_RESOLVE_SCORE,
 } from '../../services/titleMatchService';
 import { clientCodeFor } from '../../services/clientMatchService';
-import { countryKey } from '../../services/countryService';
+import { countryKey, currencyForCountry } from '../../services/countryService';
 import { TitleResolution, TitleResolutionState } from '../../types/rateCard';
 import { formatShortCurrency } from '../../utils/formatters';
 
@@ -70,12 +70,24 @@ export const TitleMatchPanel: React.FC = () => {
     if (!assignmentActuals) return [];
     const clientCodes = new Set<string>();
     const countries = new Set<string>();
+    const currencies = new Set<string>();
     for (const card of scopedRateCards) {
       const code = clientCodeFor(card.client || '', clientAliases);
       if (code) clientCodes.add(code);
       countries.add(countryKey(card.country || ''));
+      const ccy = currencyForCountry(card.country || '');
+      if (ccy) currencies.add(ccy);
     }
-    return buildTitleCandidates(assignmentActuals, { clientCodes, countries, rateYear });
+    // One comparison currency only. A scope spanning two of them cannot be
+    // compared numerically at all, and picking one would silently mis-rate the
+    // other — so the band signal is left out rather than made up.
+    const comparisonCurrency = currencies.size === 1 ? Array.from(currencies)[0] : null;
+    return buildTitleCandidates(assignmentActuals, {
+      clientCodes,
+      countries,
+      rateYear,
+      comparisonCurrency,
+    });
   }, [assignmentActuals, scopedRateCards, clientAliases, rateYear]);
 
   const resolutions = useMemo(

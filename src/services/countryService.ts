@@ -189,3 +189,48 @@ export const collectUnmappedCountries = (values: (string | undefined | null)[]):
 /** Every country the table knows, for building a picker. */
 export const knownCountries = (): { code: string; name: string }[] =>
   COUNTRIES.map(({ code, name }) => ({ code, name })).sort((a, b) => a.name.localeCompare(b.name));
+
+// ---------------------------------------------------------------------------
+// Currency
+//
+// A rate card records no currency of its own — it carries a country, and the
+// currency follows from it. That inference has to be explicit and visible,
+// because getting it wrong turns an exchange rate into a compliance finding:
+// a CAD rate of 70 against a USD band of 55-65 reads as a violation and is not
+// one.
+// ---------------------------------------------------------------------------
+
+/**
+ * The currency a card for this country is priced in.
+ *
+ * Puerto Rico is the case worth noting: it is its own market with its own
+ * client rows, but it uses the US dollar, so a PR card compares in USD.
+ */
+const COUNTRY_CURRENCY: Record<string, string> = {
+  US: 'USD', PR: 'USD',
+  CA: 'CAD',
+  GB: 'GBP',
+  IN: 'INR',
+  // The euro area, as far as this table covers it.
+  IE: 'EUR', DE: 'EUR', FR: 'EUR', NL: 'EUR', BE: 'EUR', ES: 'EUR',
+  IT: 'EUR', PT: 'EUR', AT: 'EUR', FI: 'EUR',
+  // Everything else keeps its own currency, which the actuals may not carry a
+  // conversion for. Listed rather than omitted so the gap is legible.
+  MX: 'MXN', BR: 'BRL', AR: 'ARS', CL: 'CLP', CO: 'COP', CR: 'CRC',
+  PL: 'PLN', CZ: 'CZK', HU: 'HUF', RO: 'RON', SE: 'SEK', NO: 'NOK',
+  DK: 'DKK', CH: 'CHF', CN: 'CNY', HK: 'HKD', JP: 'JPY', KR: 'KRW',
+  SG: 'SGD', MY: 'MYR', PH: 'PHP', ID: 'IDR', AU: 'AUD', NZ: 'NZD',
+  IL: 'ILS', AE: 'AED', TR: 'TRY', ZA: 'ZAR',
+};
+
+/**
+ * The currency to compare a card in, from its country value.
+ *
+ * Returns null when the country is unrecognised. Null must not be treated as
+ * USD: an unknown market compared in the wrong currency produces confident
+ * nonsense, and reporting it as uncomparable is the honest outcome.
+ */
+export const currencyForCountry = (rawCountry: string): string | null => {
+  const code = normalizeCountry(rawCountry);
+  return code ? COUNTRY_CURRENCY[code] ?? null : null;
+};
