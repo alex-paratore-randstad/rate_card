@@ -4,6 +4,11 @@ import {
   NormalizedIngestionBatch,
   IngestionPreviewData,
   RateCardFilterState,
+  ClientAlias,
+  ClientDirectory,
+  ClientDirectoryEntry,
+  ClientMatchMethod,
+  ClientResolution,
 } from '../types/rateCard';
 import {
   fetchHistoricalRateCards,
@@ -12,7 +17,14 @@ import {
   saveBatchToDomo,
   probeDomoAccess,
   DomoAccess,
+  fetchClientDirectory,
+  saveClientDirectory,
+  fetchClientAliases,
+  saveClientAlias,
+  deleteClientAlias,
 } from '../services/domoService';
+import { normalizeClientName, resolveClients } from '../services/clientMatchService';
+import { toDomoDateTime } from '../utils/formatters';
 
 interface RateCardContextType {
   /** Every record ever ingested, including superseded uploads. */
@@ -22,14 +34,31 @@ interface RateCardContextType {
   /** currentRateCards narrowed by the client and country scope. */
   scopedRateCards: RateCardRecord[];
   batches: NormalizedIngestionBatch[];
-  activeTab: 'dashboard' | 'ingest' | 'collection';
-  setActiveTab: (tab: 'dashboard' | 'ingest' | 'collection') => void;
+  activeTab: 'dashboard' | 'ingest' | 'clients' | 'collection';
+  setActiveTab: (tab: 'dashboard' | 'ingest' | 'clients' | 'collection') => void;
   previewData: IngestionPreviewData | null;
   setPreviewData: (data: IngestionPreviewData | null) => void;
   filters: RateCardFilterState;
   setFilters: React.Dispatch<React.SetStateAction<RateCardFilterState>>;
   availableClients: string[];
   availableCountries: string[];
+  /** Candidate clients from Domo, or null until a directory has been loaded. */
+  clientDirectory: ClientDirectory | null;
+  /** Confirmed uploaded-name to client-code pairings. */
+  clientAliases: ClientAlias[];
+  /** Every distinct uploaded client with its decision or ranked candidates. */
+  clientResolutions: ClientResolution[];
+  /** Replace the candidate list. */
+  loadClientDirectory: (entries: ClientDirectoryEntry[], source: ClientDirectory['source']) => Promise<void>;
+  /** Record a decision for one uploaded client. */
+  resolveClient: (
+    uploadedClient: string,
+    choice: { clientCode: string; accountName: string } | null,
+    method: ClientMatchMethod,
+    score: number
+  ) => Promise<void>;
+  /** Send a client back to the review list. */
+  unresolveClient: (uploadedClient: string) => Promise<void>;
   ingestNewBatch: (
     records: RateCardRecord[],
     sourceFileName: string,
@@ -50,12 +79,15 @@ const RateCardContext = createContext<RateCardContextType | undefined>(undefined
 export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [rateCards, setRateCards] = useState<RateCardRecord[]>([]);
   const [batches, setBatches] = useState<NormalizedIngestionBatch[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'collection'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'clients' | 'collection'>('dashboard');
   const [previewData, setPreviewData] = useState<IngestionPreviewData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [notificationMessage, setNotificationMessage] = useState<
     { type: 'success' | 'error' | 'info'; text: string } | null
   >(null);
+
+  const [clientDirectory, setClientDirectory] = useState<ClientDirectory | null>(null);
+  const [clientAliases, setClientAliases] = useState<ClientAlias[]>([]);
 
   const [filters, setFilters] = useState<RateCardFilterState>({ client: 'ALL', country: 'ALL' });
   const [domoAccess, setDomoAccess] = useState<DomoAccess | null>(null);
@@ -67,6 +99,20 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const [records, batchList] = await Promise.all([fetchHistoricalRateCards(), fetchBatches()]);
       setRateCards(records);
       setBatches(batchList);
+
+      // Client matching is a supporting feature: if its collections are not
+      // provisioned yet the reports must still load, so these failures are
+      // logged rather than thrown.
+      try {
+        const [directory, aliases] = await Promise.all([
+          fetchClientDirectory(),
+          fetchClientAliases(),
+        ]);
+        setClientDirectory(directory);
+        setClientAliases(aliases);
+      } catch (err) {
+        console.warn('[Client matching] Could not load the directory or aliases:', err);
+      }
     } catch (err: any) {
       console.error('Failed to load rate card data:', err);
       setNotificationMessage({
@@ -189,6 +235,101 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [currentRateCards, filters]
   );
 
+  const loadClientDirectory = async (
+    entries: ClientDirectoryEntry[],
+    source: ClientDirectory['source']
+  ) => {
+    const directory: ClientDirectory = { entries, loadedAt: toDomoDateTime(), source };
+    try {
+      await saveClientDirectory(directory);
+      setClientDirectory(directory);
+      setNotificationMessage({
+        type: 'success',
+        text: `Loaded ${entries.length} candidate clients.`,
+      });
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not save the client directory: ${err?.message || 'unknown error'}`,
+      });
+    }
+  };
+
+  /**
+   * Record how one uploaded client string maps onto Domo. A null `choice`
+   * records that there is no counterpart, which is a real answer — it stops the
+   * client being offered for review again.
+   */
+  const resolveClient = async (
+    uploadedClient: string,
+    choice: { clientCode: string; accountName: string } | null,
+    method: ClientMatchMethod,
+    score: number
+  ) => {
+    const normalizedKey = normalizeClientName(uploadedClient);
+    const existing = clientAliases.find((a) => a.normalizedKey === normalizedKey);
+
+    const alias: ClientAlias = {
+      id: existing?.id || '',
+      uploadedClient,
+      normalizedKey,
+      clientCode: choice?.clientCode || '',
+      accountName: choice?.accountName || '',
+      method,
+      score,
+      confirmedAt: toDomoDateTime(),
+    };
+
+    try {
+      const saved = await saveClientAlias(alias);
+      setClientAliases((prev) => [
+        saved,
+        ...prev.filter((a) => a.normalizedKey !== normalizedKey),
+      ]);
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not save the match for "${uploadedClient}": ${err?.message || 'unknown error'}`,
+      });
+    }
+  };
+
+  const unresolveClient = async (uploadedClient: string) => {
+    const normalizedKey = normalizeClientName(uploadedClient);
+    const existing = clientAliases.find((a) => a.normalizedKey === normalizedKey);
+    if (!existing) return;
+
+    try {
+      await deleteClientAlias(existing);
+      setClientAliases((prev) => prev.filter((a) => a.normalizedKey !== normalizedKey));
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not clear the match for "${uploadedClient}": ${err?.message || 'unknown error'}`,
+      });
+    }
+  };
+
+  /**
+   * Distinct uploaded client strings with how many records each carries, so the
+   * review list leads with the clients that matter most. Blank clients are
+   * excluded — there is nothing to match.
+   */
+  const uploadedClientCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const record of currentRateCards) {
+      const client = (record.client || '').trim();
+      if (!client) continue;
+      counts.set(client, (counts.get(client) ?? 0) + 1);
+    }
+    return Array.from(counts, ([client, recordCount]) => ({ client, recordCount }));
+  }, [currentRateCards]);
+
+  const clientResolutions = useMemo(
+    () => resolveClients(uploadedClientCounts, clientDirectory?.entries ?? [], clientAliases),
+    [uploadedClientCounts, clientDirectory, clientAliases]
+  );
+
   return (
     <RateCardContext.Provider
       value={{
@@ -204,6 +345,12 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setFilters,
         availableClients,
         availableCountries,
+        clientDirectory,
+        clientAliases,
+        clientResolutions,
+        loadClientDirectory,
+        resolveClient,
+        unresolveClient,
         ingestNewBatch,
         refreshDataset,
         isLoading,

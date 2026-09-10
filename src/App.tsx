@@ -7,6 +7,7 @@ import { PayVarianceTable } from './components/Dashboard/PayVarianceTable';
 import { FileUploader } from './components/Ingestion/FileUploader';
 import { ColumnMappingModal } from './components/Ingestion/ColumnMappingModal';
 import { DatasetViewer } from './components/Collection/DatasetViewer';
+import { ClientMatchPanel } from './components/Clients/ClientMatchPanel';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -67,6 +68,8 @@ const MainLayout: React.FC = () => {
         )}
 
         {activeTab === 'ingest' && <FileUploader />}
+
+        {activeTab === 'clients' && <ClientMatchPanel />}
 
         {activeTab === 'collection' && <DatasetViewer />}
       </main>

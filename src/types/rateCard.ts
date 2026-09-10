@@ -99,3 +99,100 @@ export interface RateCardFilterState {
   /** Rates from different countries are not comparable; scope before reporting. */
   country: string;
 }
+
+// ---------------------------------------------------------------------------
+// Client matching
+//
+// An uploaded client string ("Xerox") will not equal the name Domo holds
+// ("Xerox Corporation"). The name is therefore never the join key — it is
+// resolved once, by a human, onto `rsr_client_code`, and that decision is
+// persisted so it is never asked again.
+// ---------------------------------------------------------------------------
+
+/** One candidate client as Domo knows it. The directory is what we match against. */
+export interface ClientDirectoryEntry {
+  /** `rsr_client_code` — the canonical, stable id. This is the join key. */
+  clientCode: string;
+  /** `account_name`, exactly as Domo holds it. */
+  accountName: string;
+  country?: string;
+  /**
+   * Billable hours behind the account. Not used in scoring — it is how a
+   * reviewer tells a live account from a dormant one when two names look alike.
+   */
+  hours?: number;
+  /** Latest reporting month seen, for the same reason. */
+  latestMonth?: string;
+}
+
+/** The client directory, stored as one collection document and read wholesale. */
+export interface ClientDirectory {
+  entries: ClientDirectoryEntry[];
+  /** ISO timestamp of when the directory was loaded. */
+  loadedAt: string;
+  /** How it arrived — pasted by hand, or read from a mapped dataset. */
+  source: 'pasted' | 'dataset';
+}
+
+/**
+ * How a match was arrived at. Kept on the record because the strength of the
+ * evidence differs, and a report built on a guess must not look like one built
+ * on an exact match.
+ */
+export type ClientMatchMethod =
+  /** Normalized names were identical, against a single candidate. */
+  | 'exact'
+  /** A human accepted a suggested candidate. */
+  | 'confirmed'
+  /** A human picked a candidate the scorer did not suggest. */
+  | 'manual'
+  /** A human declared there is no counterpart in Domo. Stops the nagging. */
+  | 'none';
+
+/** A resolved pairing between an uploaded client string and a Domo account. */
+export interface ClientAlias {
+  /** The Domo collection document id, so a decision can be revised in place. */
+  id: string;
+  /** The client string exactly as it appeared in the upload. */
+  uploadedClient: string;
+  /** Normalized form of `uploadedClient`; the lookup key. */
+  normalizedKey: string;
+  /** Empty when `method` is 'none'. */
+  clientCode: string;
+  accountName: string;
+  method: ClientMatchMethod;
+  /** The score at the time of the decision, for later audit. */
+  score: number;
+  confirmedAt: string;
+}
+
+/** A scored candidate, with the reason shown to the reviewer. */
+export interface ClientMatchSuggestion {
+  entry: ClientDirectoryEntry;
+  /** 0 to 1. */
+  score: number;
+  /** Plain-language basis for the score, e.g. "same name ignoring 'corporation'". */
+  reason: string;
+}
+
+/** Where one uploaded client stands in the matching process. */
+export type ClientResolutionState =
+  | 'resolved'
+  /** Scored high enough to propose, but a human has not accepted it. */
+  | 'suggested'
+  /** Top candidates are too close to call; picking one would be a guess. */
+  | 'ambiguous'
+  /** Nothing scored above the floor. */
+  | 'unmatched'
+  /** No directory loaded yet, so nothing could be scored. */
+  | 'pending';
+
+/** One row of the client matching review screen. */
+export interface ClientResolution {
+  uploadedClient: string;
+  /** How many rate card records carry this client string. */
+  recordCount: number;
+  state: ClientResolutionState;
+  alias?: ClientAlias;
+  suggestions: ClientMatchSuggestion[];
+}

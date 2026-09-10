@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, FileUp, Database } from 'lucide-react';
+import { LayoutDashboard, FileUp, Database, Link2 } from 'lucide-react';
 import { useRateCard } from '../context/RateCardContext';
 
 export const Navigation: React.FC = () => {
@@ -21,6 +21,14 @@ export const Navigation: React.FC = () => {
       >
         <FileUp size={18} />
         <span>Ingest Monthly Report</span>
+      </button>
+
+      <button
+        className={`nav-tab-button ${activeTab === 'clients' ? 'active' : ''}`}
+        onClick={() => setActiveTab('clients')}
+      >
+        <Link2 size={18} />
+        <span>Client Matching</span>
       </button>
 
       <button

@@ -33,6 +33,16 @@
       "name": "rate_card_batches",
       "syncEnabled": false,
       "defaultPermission": ["read", "read_content", "create_content", "update_content"]
+    },
+    {
+      "name": "rate_card_client_directory",
+      "syncEnabled": false,
+      "defaultPermission": ["read", "read_content", "create_content", "update_content", "delete_content"]
+    },
+    {
+      "name": "rate_card_client_aliases",
+      "syncEnabled": false,
+      "defaultPermission": ["read", "read_content", "create_content", "update_content", "delete_content"]
     }
   ],
   "id": "75a49585-dd65-418d-a47e-1cfd560703e7"
