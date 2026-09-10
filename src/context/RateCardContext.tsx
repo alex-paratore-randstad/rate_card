@@ -25,6 +25,7 @@ import {
 } from '../services/domoService';
 import { normalizeClientName, resolveClients } from '../services/clientMatchService';
 import { fetchClientDirectoryFromDataset } from '../services/datasetService';
+import { countryKey } from '../services/countryService';
 import { toDomoDateTime } from '../utils/formatters';
 
 interface RateCardContextType {
@@ -219,8 +220,16 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [currentRateCards]
   );
 
+  /**
+   * Canonical country keys present in the current records.
+   *
+   * Keyed rather than raw so two spellings of one country stop appearing as two
+   * markets — an upload tagged "USA" and one tagged "US" describe the same
+   * bands, and offering both as separate scopes invites splitting a report in
+   * half for no reason.
+   */
   const availableCountries = useMemo(
-    () => Array.from(new Set(currentRateCards.map((r) => r.country || ''))).sort(),
+    () => Array.from(new Set(currentRateCards.map((r) => countryKey(r.country || '')))).sort(),
     [currentRateCards]
   );
 
@@ -233,7 +242,7 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       currentRateCards.filter(
         (r) =>
           (filters.client === 'ALL' || (r.client || '') === filters.client) &&
-          (filters.country === 'ALL' || (r.country || '') === filters.country)
+          (filters.country === 'ALL' || countryKey(r.country || '') === filters.country)
       ),
     [currentRateCards, filters]
   );

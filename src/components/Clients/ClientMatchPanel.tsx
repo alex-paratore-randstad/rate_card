@@ -18,6 +18,7 @@ import {
 } from '../../services/clientMatchService';
 import { ClientResolution, ClientResolutionState } from '../../types/rateCard';
 import { formatDateRandstad } from '../../utils/formatters';
+import { describeCountry } from '../../services/countryService';
 
 const STATE_PILL: Record<ClientResolutionState, { className: string; label: string }> = {
   resolved: { className: 'success', label: 'Matched' },
@@ -45,8 +46,9 @@ const hoursLabel = (hours?: number) =>
  */
 const countriesLabel = (countries: string[]): string => {
   if (!countries.length) return '';
-  if (countries.length <= 3) return countries.join(' · ');
-  return `${countries.slice(0, 3).join(' · ')} +${countries.length - 3} more`;
+  const named = countries.map(describeCountry);
+  if (named.length <= 3) return named.join(' · ');
+  return `${named.slice(0, 3).join(' · ')} +${named.length - 3} more`;
 };
 
 /**

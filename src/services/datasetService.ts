@@ -8,6 +8,7 @@ import {
 } from '../types/domoDatasets';
 import { ClientDirectoryEntry } from '../types/rateCard';
 import { collapseDirectoryByClientCode } from './clientMatchService';
+import { collectUnmappedCountries, countryKey } from './countryService';
 import { probeDomoAccess } from './domoService';
 
 /**
@@ -374,10 +375,24 @@ export const fetchClientDirectoryFromDataset = async (): Promise<{
     perCountry.push({
       clientCode,
       accountName,
-      country: row.rsr_country || undefined,
+      // Canonicalised on the way in, so a candidate's countries are directly
+      // comparable to a rate card's without either side knowing the other's
+      // vocabulary.
+      country: row.rsr_country ? countryKey(row.rsr_country) : undefined,
       hours: typeof row.hours_sum === 'number' ? row.hours_sum : undefined,
       latestMonth: row.month_max || undefined,
     });
+  }
+
+  // Anything the table does not recognise still reports, under its own raw
+  // spelling — it just will not join to a card tagged any other way, which is
+  // worth knowing about now rather than when a report comes up empty.
+  const unmapped = collectUnmappedCountries(rows.map((r) => r.rsr_country));
+  if (unmapped.length) {
+    console.warn(
+      `[Country] ${unmapped.length} unrecognised country value(s) in the directory: ` +
+        `${unmapped.join(', ')}. Add them to countryService's table.`
+    );
   }
 
   // The dataflow emits one row per client per country; the matcher wants one

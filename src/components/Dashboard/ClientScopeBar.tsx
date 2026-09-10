@@ -1,6 +1,7 @@
 import React from 'react';
 import { Building2, Globe2, Users } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
+import { describeCountry } from '../../services/countryService';
 
 const UNSPECIFIED = 'Unspecified';
 const labelFor = (value: string) => value || UNSPECIFIED;
@@ -56,7 +57,7 @@ export const ClientScopeBar: React.FC = () => {
         >
           <option value="ALL">All Countries</option>
           {availableCountries.map((c) => (
-            <option key={c || 'unspecified'} value={c}>{labelFor(c)}</option>
+            <option key={c || 'unspecified'} value={c}>{describeCountry(c)}</option>
           ))}
         </select>
       </div>
