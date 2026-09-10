@@ -11,6 +11,7 @@ import { ClientMatchPanel } from './components/Clients/ClientMatchPanel';
 import { CoverageReport } from './components/Dashboard/CoverageReport';
 import { TitleMatchPanel } from './components/Clients/TitleMatchPanel';
 import { ComplianceReport } from './components/Dashboard/ComplianceReport';
+import { TemplateComplianceReport } from './components/Dashboard/TemplateComplianceReport';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -92,10 +93,13 @@ const MainLayout: React.FC = () => {
           </>
         )}
 
+        {/* Both checks are compliance findings, so they share a tab: the card
+            band first, then the ceiling the VMS enforces independently. */}
         {activeTab === 'compliance' && (
           <>
             <ClientScopeBar />
             <ComplianceReport />
+            <TemplateComplianceReport />
           </>
         )}
 
