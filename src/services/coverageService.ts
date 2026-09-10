@@ -1,9 +1,7 @@
-import { AssignmentActualRow, payRateFieldFor } from '../types/domoDatasets';
+import { AssignmentActualRow } from '../types/domoDatasets';
 import { ClientAlias, RateCardRecord, TitleAlias } from '../types/rateCard';
-import { clientCodeFor } from './clientMatchService';
-import { countryKey, currencyForCountry, describeCountry } from './countryService';
-import { normalizeJobTitle } from './titleService';
-import { actualTitleKeyFor } from './titleMatchService';
+import { describeCountry } from './countryService';
+import { resolveScope, scopeRows } from './scopeService';
 
 /**
  * Card coverage: which work a rate card actually governs.
@@ -15,10 +13,14 @@ import { actualTitleKeyFor } from './titleMatchService';
  *   - Card rows with no hours behind them. Bands maintained for work that is
  *     not happening, or a title that failed to match.
  *
- * No rate comparison happens here on purpose. This report exercises the client,
- * country and title joins and nothing else, so that when a variance number is
- * built on those joins there is already evidence they hold. A compliance
- * percentage computed on a broken join looks entirely reasonable.
+ * No rate comparison happens here on purpose. This report exercises the
+ * client, country and title joins and nothing else, so that when a compliance
+ * verdict is built on those joins there is already evidence they hold. A
+ * compliance percentage computed over a broken join looks entirely reasonable.
+ *
+ * Scoping is delegated to scopeService, shared with the compliance report —
+ * two reports disagreeing about the population would leave nobody able to say
+ * which was wrong.
  */
 
 export type CoverageState =
@@ -93,8 +95,8 @@ const sum = (values: number[]): number => values.reduce((a, b) => a + (b || 0), 
  * Build the report.
  *
  * `cards` is expected already scoped by the dashboard's client and country
- * selectors; this narrows further to one rate year, because a card governs a
- * year and comparing 2025 bands against 2026 work answers nothing.
+ * selectors; the shared scope narrows further to one rate year, because a card
+ * governs a year and comparing 2025 bands against 2026 work answers nothing.
  */
 export const buildCoverageReport = (
   cards: RateCardRecord[],
@@ -103,83 +105,9 @@ export const buildCoverageReport = (
   titleAliases: TitleAlias[] = [],
   requestedYear?: string
 ): CoverageReport => {
-  const availableYears = Array.from(new Set(cards.map((c) => c.rateYear).filter(Boolean))).sort();
-  const rateYear = requestedYear && availableYears.includes(requestedYear)
-    ? requestedYear
-    : availableYears[availableYears.length - 1] ?? '';
+  const scope = resolveScope(cards, aliases, titleAliases, requestedYear);
+  const { scoped, excluded } = scopeRows(actuals, scope);
 
-  const yearCards = cards.filter((c) => c.rateYear === rateYear);
-
-  // --- resolve each card client onto a code -------------------------------
-  const unresolved = new Set<string>();
-  const codeToLabel = new Map<string, string>();
-  const scopeKeys = new Set<string>(); // `${clientCode}||${countryKey}`
-  const countries = new Set<string>();
-  /** Comparison currency per country in scope, inferred from the country. */
-  const currencyByCountry = new Map<string, string | null>();
-
-  interface CardAgg {
-    clientCode: string;
-    clientLabel: string;
-    titleKey: string;
-    title: string;
-    laborType?: string;
-    minRate: number;
-    maxRate: number;
-    rowCount: number;
-  }
-  const cardByKey = new Map<string, CardAgg>();
-
-  for (const card of yearCards) {
-    const clientName = (card.client || '').trim();
-    const code = clientCodeFor(clientName, aliases);
-    if (!code) {
-      if (clientName) unresolved.add(clientName);
-      continue;
-    }
-    codeToLabel.set(code, clientName);
-
-    const country = countryKey(card.country || '');
-    countries.add(country);
-    scopeKeys.add(`${code}||${country}`);
-    if (!currencyByCountry.has(country)) {
-      currencyByCountry.set(country, currencyForCountry(card.country || ''));
-    }
-
-    const titleKey = normalizeJobTitle(card.jobTitle || '');
-    if (!titleKey) continue;
-
-    // A confirmed title match redirects the card onto the actuals title it was
-    // paired with. Without this the matcher would have no effect on the report
-    // it exists to improve. Two card titles resolving to one actuals title
-    // merge here, which widens the band — the same treatment duplicate card
-    // rows already get.
-    const joinKey = actualTitleKeyFor(code, card.jobTitle || '', titleAliases) ?? titleKey;
-
-    const key = `${code}||${joinKey}`;
-    const existing = cardByKey.get(key);
-    if (existing) {
-      // Several card rows for one title — different labor types, or a country
-      // split. Widen the band rather than pick one, and record that it happened
-      // so the number is not mistaken for a single published band.
-      existing.minRate = Math.min(existing.minRate, card.minRate);
-      existing.maxRate = Math.max(existing.maxRate, card.maxRate);
-      existing.rowCount += 1;
-    } else {
-      cardByKey.set(key, {
-        clientCode: code,
-        clientLabel: clientName,
-        titleKey: joinKey,
-        title: card.jobTitle,
-        laborType: card.laborType,
-        minRate: card.minRate,
-        maxRate: card.maxRate,
-        rowCount: 1,
-      });
-    }
-  }
-
-  // --- narrow the actuals to the same scope -------------------------------
   interface ActualAgg {
     clientCode: string;
     titleKey: string;
@@ -190,57 +118,15 @@ export const buildCoverageReport = (
     currencies: Set<string>;
   }
   const actualByKey = new Map<string, ActualAgg>();
-  const excluded = { client: 0, country: 0, year: 0, title: 0, hours: 0 };
-  let considered = 0;
 
-  for (const row of actuals) {
-    const code = (row.rsr_client_code || '').trim();
-    if (!code || !codeToLabel.has(code)) {
-      excluded.client += 1;
-      continue;
-    }
-    const country = countryKey(row.rsr_country || '');
-    if (!scopeKeys.has(`${code}||${country}`)) {
-      excluded.country += 1;
-      continue;
-    }
-    if ((row.card_year || '') !== rateYear) {
-      excluded.year += 1;
-      continue;
-    }
-    const titleKey = normalizeJobTitle(row.title_cleaned || '');
-    if (!titleKey) {
-      excluded.title += 1;
-      continue;
-    }
-    const hours = typeof row.hours_to_date === 'number' ? row.hours_to_date : 0;
-    if (hours <= 0) {
-      // Kept out of the aggregate but counted: an assignment with no hours yet
-      // cannot weight anything, and silently including it would drag the
-      // weighted rate toward zero.
-      excluded.hours += 1;
-      continue;
-    }
-
-    // Compare in the currency the card is priced in, using the source's own
-    // conversion. Falling back to the raw local rate only when no converted
-    // column exists — and then the row's own currency is what gets reported,
-    // so a mixed scope still raises the warning rather than averaging quietly.
-    const comparisonCurrency = currencyByCountry.get(country) ?? null;
-    const field = comparisonCurrency ? payRateFieldFor(comparisonCurrency) : null;
-    const converted = field ? (row[field] as number | null) : null;
-    const rate = typeof converted === 'number' ? converted : row.pay_rate_st_hr;
-    const rateCurrency =
-      typeof converted === 'number' ? comparisonCurrency! : row.currency;
-
-    considered += 1;
-    const key = `${code}||${titleKey}`;
+  for (const item of scoped) {
+    const key = `${item.clientCode}||${item.titleKey}`;
     let agg = actualByKey.get(key);
     if (!agg) {
       agg = {
-        clientCode: code,
-        titleKey,
-        title: row.title_cleaned,
+        clientCode: item.clientCode,
+        titleKey: item.titleKey,
+        title: item.row.title_cleaned,
         assignments: new Set(),
         hours: 0,
         payDollars: 0,
@@ -248,38 +134,37 @@ export const buildCoverageReport = (
       };
       actualByKey.set(key, agg);
     }
-    agg.assignments.add(row.assignment_unique_key);
-    agg.hours += hours;
-    // Recomputed rather than taking the ETL's pay_dollars: that column is
-    // rate x hours in the *local* currency, so using it here would mix a
-    // converted rate with unconverted dollars.
-    agg.payDollars += (typeof rate === 'number' ? rate : 0) * hours;
-    if (rateCurrency) agg.currencies.add(rateCurrency);
+    agg.assignments.add(item.row.assignment_unique_key);
+    agg.hours += item.hours;
+    // Computed from the comparison rate, not the ETL's pay_dollars, which is
+    // rate x hours in the local currency.
+    agg.payDollars += item.rate * item.hours;
+    agg.currencies.add(item.currency);
   }
 
-  // --- outer join ---------------------------------------------------------
+  // --- outer join of card bands against aggregated actuals -----------------
   const rows: CoverageRow[] = [];
-  const allKeys = new Set([...cardByKey.keys(), ...actualByKey.keys()]);
+  const allKeys = new Set([...scope.cardBands.keys(), ...actualByKey.keys()]);
 
   for (const key of allKeys) {
-    const card = cardByKey.get(key);
+    const band = scope.cardBands.get(key);
     const actual = actualByKey.get(key);
 
-    const clientCode = card?.clientCode ?? actual!.clientCode;
+    const clientCode = band?.clientCode ?? actual!.clientCode;
     const base: CoverageRow = {
       clientCode,
-      clientLabel: codeToLabel.get(clientCode) ?? clientCode,
-      title: card?.title ?? actual!.title,
-      titleKey: card?.titleKey ?? actual!.titleKey,
-      state: card && actual ? 'matched' : card ? 'card-only' : 'actuals-only',
+      clientLabel: scope.clientLabels.get(clientCode) ?? clientCode,
+      title: band?.title ?? actual!.title,
+      titleKey: key.split('||')[1] ?? '',
+      state: band && actual ? 'matched' : band ? 'card-only' : 'actuals-only',
     };
 
-    if (card) {
-      base.cardTitle = card.title;
-      base.cardLaborType = card.laborType;
-      base.cardMinRate = card.minRate;
-      base.cardMaxRate = card.maxRate;
-      base.cardRowCount = card.rowCount;
+    if (band) {
+      base.cardTitle = band.title;
+      base.cardLaborType = band.laborType;
+      base.cardMinRate = band.minRate;
+      base.cardMaxRate = band.maxRate;
+      base.cardRowCount = band.rowCount;
     }
     if (actual) {
       base.assignments = actual.assignments.size;
@@ -305,23 +190,14 @@ export const buildCoverageReport = (
   const uncoveredHours = sum(uncovered.map((r) => r.hours ?? 0));
   const totalHours = coveredHours + uncoveredHours;
 
-  const currencies = new Set<string>();
-  for (const row of rows) for (const c of row.currencies ?? []) currencies.add(c);
-
   return {
     rows,
-    rateYear,
-    availableYears,
-    unresolvedClients: Array.from(unresolved).sort(),
-    countries: Array.from(countries).sort(),
-    actualsConsidered: considered,
-    actualsExcluded: [
-      { reason: 'client not in scope, or unresolved', count: excluded.client },
-      { reason: 'country not in scope', count: excluded.country },
-      { reason: `card year is not ${rateYear || 'the selected year'}`, count: excluded.year },
-      { reason: 'no cleaned title', count: excluded.title },
-      { reason: 'no hours recorded yet', count: excluded.hours },
-    ].filter((e) => e.count > 0),
+    rateYear: scope.rateYear,
+    availableYears: scope.availableYears,
+    unresolvedClients: scope.unresolvedClients,
+    countries: Array.from(scope.countries).sort(),
+    actualsConsidered: scoped.length,
+    actualsExcluded: excluded,
     totals: {
       coveredHours,
       uncoveredHours,
@@ -331,8 +207,10 @@ export const buildCoverageReport = (
       titlesWithoutCard: uncovered.length,
     },
     currencyWarning:
-      currencies.size > 1
-        ? `Hours in scope span ${currencies.size} currencies (${Array.from(currencies)
+      scope.currencies.size > 1
+        ? `Hours in scope span ${scope.currencies.size} comparison currencies (${Array.from(
+            scope.currencies
+          )
             .sort()
             .join(', ')}). Rates shown are not comparable across them — scope to one country.`
         : undefined,

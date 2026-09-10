@@ -10,6 +10,7 @@ import { DatasetViewer } from './components/Collection/DatasetViewer';
 import { ClientMatchPanel } from './components/Clients/ClientMatchPanel';
 import { CoverageReport } from './components/Dashboard/CoverageReport';
 import { TitleMatchPanel } from './components/Clients/TitleMatchPanel';
+import { ComplianceReport } from './components/Dashboard/ComplianceReport';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -88,6 +89,13 @@ const MainLayout: React.FC = () => {
           <>
             <ClientScopeBar />
             <CoverageReport />
+          </>
+        )}
+
+        {activeTab === 'compliance' && (
+          <>
+            <ClientScopeBar />
+            <ComplianceReport />
           </>
         )}
 
