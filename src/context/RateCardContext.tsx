@@ -267,11 +267,19 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
    */
   const loadClientDirectoryFromDomo = async () => {
     try {
-      const { entries, source, skipped } = await fetchClientDirectoryFromDataset();
+      const { entries, source, skipped, rowCount, columns } = await fetchClientDirectoryFromDataset();
       if (!entries.length) {
+        // Say which of the two failures this is. "No usable rows" alone sent the
+        // last round of debugging to the browser console for information the
+        // message could have carried itself.
         setNotificationMessage({
           type: 'error',
-          text: 'The client directory dataset returned no usable rows.',
+          text: rowCount
+            ? `The dataset returned ${rowCount} row(s), but none carried both a client code and an ` +
+              `account name. Columns found: ${columns.join(', ') || '(none)'}. Expected ` +
+              `rsr_client_code and account_name.`
+            : 'The client directory dataset returned zero rows. Check the dataflow has run, and ' +
+              'that the dataset is bound to this card and shared with the app.',
         });
         return;
       }

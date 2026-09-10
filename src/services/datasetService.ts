@@ -132,8 +132,28 @@ const extractRows = (
 
     for (const key of ROW_ARRAY_KEYS) {
       if (Array.isArray(obj[key])) {
+        const found = obj[key] as unknown[];
+
+        // Columnar form: rows are arrays of values with the header supplied
+        // separately, e.g. {columns:["a","b"], rows:[[1,2]]}. Zipping is
+        // unambiguous when both are present, and the alternative is every row
+        // silently failing a property lookup it was never going to satisfy.
+        const columns = obj.columns ?? obj.fields ?? obj.headers;
+        if (
+          Array.isArray(columns) &&
+          columns.every((c) => typeof c === 'string') &&
+          found.length > 0 &&
+          Array.isArray(found[0])
+        ) {
+          const names = columns as string[];
+          const zipped = (found as unknown[][]).map((values) =>
+            Object.fromEntries(names.map((name, i) => [name, values[i]]))
+          );
+          return { rows: zipped, shape: `columnar "${key}" zipped with ${names.length} column name(s)` };
+        }
+
         return {
-          rows: obj[key] as Record<string, unknown>[],
+          rows: found as Record<string, unknown>[],
           shape: `array wrapped in "${key}"`,
         };
       }
@@ -236,8 +256,17 @@ export const fetchDataset = async <T>(alias: DatasetAlias): Promise<DatasetReadR
     );
   }
 
-  const rows = JSON.parse(seeded) as Record<string, unknown>[];
-  console.info(`[Domo Dataset] ${alias}: ${rows.length} seeded row(s) from local storage.`);
+  // Seeded payloads go through the same unwrapping as a live read. The purpose
+  // of seeding is to reproduce what Domo actually returns, which is not always
+  // a bare array — a seed path that only accepted arrays could not represent
+  // the shape that caused the problem being debugged.
+  const { rows, shape } = extractRows(JSON.parse(seeded));
+  if (!rows) {
+    throw new Error(`Seeded rows for "${alias}" contain no row array — ${shape}.`);
+  }
+  console.info(
+    `[Domo Dataset] ${alias}: ${rows.length} seeded row(s) from local storage (${shape}).`
+  );
   return {
     rows: coerceNumerics<T>(alias, rows),
     source: 'local-seed',
@@ -288,10 +317,19 @@ export const probeQuerySupport = async (
   }
 };
 
-/** Seed rows for local development. Never used by a published app. */
-export const seedLocalDataset = (alias: DatasetAlias, rows: Record<string, unknown>[]): void => {
-  localStorage.setItem(localKey(alias), JSON.stringify(rows));
-  console.info(`[Domo Dataset] Seeded ${rows.length} local row(s) for ${alias}.`);
+/**
+ * Seed a payload for local development. Never used by a published app.
+ *
+ * Takes the response body as the endpoint would return it — bare array,
+ * wrapped, or columnar — so a shape seen in Domo can be reproduced here
+ * exactly rather than approximated.
+ */
+export const seedLocalDataset = (alias: DatasetAlias, payload: unknown): void => {
+  localStorage.setItem(localKey(alias), JSON.stringify(payload));
+  const { rows, shape } = extractRows(payload);
+  console.info(
+    `[Domo Dataset] Seeded ${alias}: ${rows ? `${rows.length} row(s)` : 'no rows'} (${shape}).`
+  );
 };
 
 export const clearLocalDataset = (alias: DatasetAlias): void =>
@@ -314,8 +352,13 @@ export const fetchClientDirectoryFromDataset = async (): Promise<{
   entries: ClientDirectoryEntry[];
   source: DatasetReadResult<unknown>['source'];
   skipped: number;
+  /** Rows the dataset returned, before any were dropped. */
+  rowCount: number;
+  /** Column names on the first row — the diagnostic when nothing is usable. */
+  columns: string[];
 }> => {
   const { rows, source } = await fetchDataset<ClientDirectoryRow>(DATASET_ALIASES.clientDirectory);
+  const columns = rows.length ? Object.keys(rows[0] as unknown as Record<string, unknown>) : [];
 
   const entries: ClientDirectoryEntry[] = [];
   let skipped = 0;
@@ -339,7 +382,7 @@ export const fetchClientDirectoryFromDataset = async (): Promise<{
   if (skipped) {
     console.warn(`[Domo Dataset] Skipped ${skipped} directory row(s) missing a code or name.`);
   }
-  return { entries, source, skipped };
+  return { entries, source, skipped, rowCount: rows.length, columns };
 };
 
 /** Assignment-level actuals. The reports join these against the rate card. */
