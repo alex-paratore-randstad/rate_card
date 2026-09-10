@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { CheckCircle2, HelpCircle, ShieldCheck } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
 import { ColumnMapping, TargetFieldType, IngestionPreviewData } from '../../types/rateCard';
 import { normalizeRawData } from '../../services/parserService';
+import { auditCardBands } from '../../services/cardQualityService';
 import { formatDateRandstad, toDomoDateTime } from '../../utils/formatters';
 
 const CORE_OPTIONS: { value: TargetFieldType; label: string }[] = [
@@ -52,6 +53,33 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
    */
   const tagged = previewData.perTabTagged === true;
   const canConfirm = tagged || Boolean(client.trim() && country.trim());
+
+  /**
+   * Audit the records this dialog would save, not the raw rows.
+   *
+   * Run here because this is the last moment before a card becomes the basis
+   * of a report. A band whose max is a formula produces compliance figures
+   * that look entirely reasonable, and the cheapest place to notice is before
+   * anything is stored.
+   */
+  const cardIssues = useMemo(() => {
+    if (!previewData) return [];
+    try {
+      return auditCardBands(
+        normalizeRawData(
+          previewData,
+          mappings,
+          { client: client.trim(), country: country.trim() },
+          'preview',
+          new Date().toISOString()
+        )
+      );
+    } catch {
+      // A mapping mid-edit can fail to normalise; that is the validation
+      // messages' job to report, not this one's.
+      return [];
+    }
+  }, [previewData, mappings, client, country]);
 
   const handleConfirmIngestion = async () => {
     if (!canConfirm) return;
@@ -171,6 +199,46 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
                 {err}
               </div>
             ))}
+          </div>
+        )}
+
+        {cardIssues.length > 0 && (
+          <div
+            className="tonal-card-sub"
+            style={{
+              marginBottom: '20px',
+              backgroundColor: 'rgba(224, 15, 15, 0.08)',
+              borderLeft: '3px solid var(--status-error)',
+            }}
+          >
+            <div
+              style={{
+                fontFamily: 'monospace',
+                fontSize: '0.7rem',
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                color: 'var(--status-error)',
+                marginBottom: '8px',
+              }}
+            >
+              {cardIssues.length} issue{cardIssues.length === 1 ? '' : 's'} in the bands themselves
+            </div>
+            {cardIssues.map((issue) => (
+              <div
+                key={issue.kind}
+                style={{ marginBottom: '10px', fontSize: '0.85rem', color: 'var(--on-surface)' }}
+              >
+                <div style={{ fontWeight: 600 }}>{issue.summary}</div>
+                <div style={{ color: 'var(--on-surface-muted)' }}>{issue.consequence}</div>
+                <div style={{ color: 'var(--on-surface-muted)' }}>
+                  <strong>What to do:</strong> {issue.action}
+                </div>
+              </div>
+            ))}
+            <div style={{ fontSize: '0.8rem', color: 'var(--on-surface-subtle)' }}>
+              These do not block the upload — the data may be exactly as intended. They decide how
+              the compliance figures built on it should be read.
+            </div>
           </div>
         )}
 

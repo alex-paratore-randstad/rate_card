@@ -4,6 +4,9 @@ import {
   TrendingUp,
   TrendingDown,
   Shuffle,
+  FileWarning,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   DatabaseZap,
   CalendarRange,
   AlertTriangle,
@@ -154,6 +157,34 @@ export const ComplianceReport: React.FC = () => {
               </div>
             )}
 
+            {report.cardIssues.length > 0 && (
+              <div
+                className="exclude"
+                style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+              >
+                <span className="lede">
+                  <FileWarning size={12} style={{ verticalAlign: '-2px', marginRight: '4px' }} />
+                  Read the card first — {report.cardIssues.length} issue
+                  {report.cardIssues.length === 1 ? '' : 's'} found in the bands themselves
+                </span>
+                {report.cardIssues.map((issue) => (
+                  <div key={issue.kind} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <span style={{ fontWeight: 600 }}>{issue.summary}</span>
+                    <span className="text-meta">{issue.consequence}</span>
+                    <span className="text-meta">
+                      <strong>What to do:</strong> {issue.action}
+                    </span>
+                    <span className="text-meta">
+                      Affects: {issue.titles.join(', ')}
+                      {issue.count > issue.titles.length
+                        ? ` and ${issue.count - issue.titles.length} more`
+                        : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="kpi-grid">
               <div className="kpi-card">
                 <span className="kpi-label">Hours inside band</span>
@@ -170,6 +201,12 @@ export const ComplianceReport: React.FC = () => {
                 <span className="text-meta">
                   {hoursLabel(report.totals.hoursAbove)} hrs · {money(report.totals.openExcessAmount, report.currency)} still open
                 </span>
+                {report.totals.excessOnDisjointBands > 0 && (
+                  <span className="text-meta" style={{ color: 'var(--status-warning)' }}>
+                    {money(report.totals.excessOnDisjointBands, report.currency)} of it on titles
+                    whose band misses the market entirely — not recoverable
+                  </span>
+                )}
               </div>
               <div className="kpi-card">
                 <span className="kpi-label">Below min</span>
@@ -184,6 +221,30 @@ export const ComplianceReport: React.FC = () => {
                 <span className="text-meta">an average alone would call these compliant</span>
               </div>
             </div>
+
+            {(report.totals.titlesBandBelow > 0 || report.totals.titlesBandAbove > 0) && (
+              <div className="caution">
+                <span className="lede">Band problems, not compliance problems</span>
+                {report.totals.titlesBandBelow > 0 && (
+                  <div style={{ marginBottom: '6px' }}>
+                    <strong>{report.totals.titlesBandBelow} title(s)</strong> had{' '}
+                    <em>every</em> assignment paid above the maximum, with no overlap between the
+                    band and the rates actually paid. Several independent hiring decisions do not
+                    all breach a ceiling by coincidence — the band sits below this market. The
+                    cost shown against those titles is the price of a stale card line, not money
+                    anyone can recover.
+                  </div>
+                )}
+                {report.totals.titlesBandAbove > 0 && (
+                  <div>
+                    <strong>{report.totals.titlesBandAbove} title(s)</strong> had every assignment
+                    paid below the minimum. Usually the band is too high for the work, or two
+                    different roles share one title — worth checking before it is read as
+                    under-payment.
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="note">
               <strong>Every assignment is judged on its own.</strong> Hours are then summed by
@@ -276,15 +337,26 @@ export const ComplianceReport: React.FC = () => {
                           matched to &ldquo;{t.actualTitle}&rdquo;
                         </span>
                       )}
-                      {t.scattered && (
-                        <span
-                          className="status-pill warning"
-                          style={{ marginTop: '4px', fontSize: '0.7rem' }}
-                        >
-                          <Shuffle size={11} />
-                          scattered
-                        </span>
-                      )}
+                      <span style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+                        {t.scattered && (
+                          <span className="status-pill warning" style={{ fontSize: '0.7rem' }}>
+                            <Shuffle size={11} />
+                            scattered
+                          </span>
+                        )}
+                        {t.bandVsObserved === 'band-below-observed' && (
+                          <span className="status-pill error" style={{ fontSize: '0.7rem' }}>
+                            <ArrowUpFromLine size={11} />
+                            band below market
+                          </span>
+                        )}
+                        {t.bandVsObserved === 'band-above-observed' && (
+                          <span className="status-pill error" style={{ fontSize: '0.7rem' }}>
+                            <ArrowDownToLine size={11} />
+                            band above market
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {formatShortCurrency(t.cardMinRate, t.currency)} –{' '}

@@ -1,6 +1,7 @@
 import { AssignmentActualRow } from '../types/domoDatasets';
 import { ClientAlias, RateCardRecord, TitleAlias } from '../types/rateCard';
 import { ResolvedScope, resolveScope, scopeRows, singleCurrency } from './scopeService';
+import { CardIssue, auditCardBands } from './cardQualityService';
 
 /**
  * Card compliance: whether the work is being paid inside the band it was priced at.
@@ -75,6 +76,21 @@ export interface ComplianceTitleRow {
    * average sits inside. The average alone would have called this compliant.
    */
   scattered: boolean;
+
+  /**
+   * Whether the band and the observed rates overlap at all.
+   *
+   * `band-below-observed` means every assignment was paid above the maximum —
+   * and several independent hiring decisions do not all breach a ceiling by
+   * coincidence, so the band is below the market rather than the market being
+   * in breach. Any cost-above-band on such a title is the price of a stale
+   * card line, not money anyone can recover.
+   *
+   * `band-above-observed` is the mirror: everything paid under the minimum,
+   * which usually means the band is too high or two different roles share one
+   * title.
+   */
+  bandVsObserved: 'overlaps' | 'band-below-observed' | 'band-above-observed';
 }
 
 export interface ComplianceTotals {
@@ -89,6 +105,14 @@ export interface ComplianceTotals {
   openExcessAmount: number;
   assignments: number;
   titlesScattered: number;
+  /**
+   * Excess sitting on titles whose band does not overlap the observed rates at
+   * all. Reported apart from the rest because it is not recoverable — it
+   * measures how far the card is from the market, not a breach.
+   */
+  excessOnDisjointBands: number;
+  titlesBandBelow: number;
+  titlesBandAbove: number;
 }
 
 export interface ComplianceReport {
@@ -107,6 +131,12 @@ export interface ComplianceReport {
   unresolvedClients: string[];
   excluded: { reason: string; count: number }[];
   currencyWarning?: string;
+  /**
+   * Problems with the card itself, which decide how the figures above should
+   * be read. Carried on the report rather than left to the ingestion screen:
+   * this is where the numbers get quoted from.
+   */
+  cardIssues: CardIssue[];
 }
 
 const classify = (rate: number, min: number, max: number): ComplianceClass => {
@@ -204,6 +234,7 @@ export const buildComplianceReport = (
           shortfallAmount: 0,
           openExcessAmount: 0,
           scattered: false,
+          bandVsObserved: 'overlaps',
         },
       };
       byTitle.set(key, agg);
@@ -239,6 +270,16 @@ export const buildComplianceReport = (
       row.weightedRate <= row.cardMaxRate &&
       row.hoursAbove + row.hoursBelow > 0;
     row.scattered = bothSides || averageLooksFine;
+
+    // No overlap between the band and what was actually paid. This is the
+    // difference between "the market breached the band" and "the band does not
+    // describe this market", and the two call for opposite responses.
+    row.bandVsObserved =
+      row.cardMaxRate > 0 && row.observedMin > row.cardMaxRate
+        ? 'band-below-observed'
+        : row.cardMinRate > 0 && row.observedMax < row.cardMinRate
+        ? 'band-above-observed'
+        : 'overlaps';
     return row;
   });
 
@@ -262,11 +303,16 @@ export const buildComplianceReport = (
       openExcessAmount: acc.openExcessAmount + t.openExcessAmount,
       assignments: acc.assignments + t.assignments,
       titlesScattered: acc.titlesScattered + (t.scattered ? 1 : 0),
+      excessOnDisjointBands:
+        acc.excessOnDisjointBands + (t.bandVsObserved === 'overlaps' ? 0 : t.excessAmount),
+      titlesBandBelow: acc.titlesBandBelow + (t.bandVsObserved === 'band-below-observed' ? 1 : 0),
+      titlesBandAbove: acc.titlesBandAbove + (t.bandVsObserved === 'band-above-observed' ? 1 : 0),
     }),
     {
       hours: 0, hoursBelow: 0, hoursIn: 0, hoursAbove: 0, inBandShare: null,
       excessAmount: 0, shortfallAmount: 0, openExcessAmount: 0,
       assignments: 0, titlesScattered: 0,
+      excessOnDisjointBands: 0, titlesBandBelow: 0, titlesBandAbove: 0,
     }
   );
   totals.inBandShare = totals.hours > 0 ? totals.hoursIn / totals.hours : null;
@@ -283,6 +329,7 @@ export const buildComplianceReport = (
     availableYears: scope.availableYears,
     countries: Array.from(scope.countries).sort(),
     currency,
+    cardIssues: auditCardBands(cards.filter((c) => c.rateYear === scope.rateYear)),
     titles,
     totals,
     worstAssignments,
