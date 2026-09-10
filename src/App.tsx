@@ -8,6 +8,7 @@ import { FileUploader } from './components/Ingestion/FileUploader';
 import { ColumnMappingModal } from './components/Ingestion/ColumnMappingModal';
 import { DatasetViewer } from './components/Collection/DatasetViewer';
 import { ClientMatchPanel } from './components/Clients/ClientMatchPanel';
+import { CoverageReport } from './components/Dashboard/CoverageReport';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -70,6 +71,15 @@ const MainLayout: React.FC = () => {
         {activeTab === 'ingest' && <FileUploader />}
 
         {activeTab === 'clients' && <ClientMatchPanel />}
+
+        {/* Coverage reads the same client/country scope as the dashboard, so the
+            scope bar comes along rather than being duplicated. */}
+        {activeTab === 'coverage' && (
+          <>
+            <ClientScopeBar />
+            <CoverageReport />
+          </>
+        )}
 
         {activeTab === 'collection' && <DatasetViewer />}
       </main>

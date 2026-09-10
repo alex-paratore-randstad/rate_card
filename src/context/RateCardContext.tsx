@@ -24,7 +24,11 @@ import {
   deleteClientAlias,
 } from '../services/domoService';
 import { normalizeClientName, resolveClients } from '../services/clientMatchService';
-import { fetchClientDirectoryFromDataset } from '../services/datasetService';
+import {
+  fetchClientDirectoryFromDataset,
+  fetchAssignmentActuals,
+} from '../services/datasetService';
+import { AssignmentActualRow } from '../types/domoDatasets';
 import { countryKey } from '../services/countryService';
 import { toDomoDateTime } from '../utils/formatters';
 
@@ -36,8 +40,8 @@ interface RateCardContextType {
   /** currentRateCards narrowed by the client and country scope. */
   scopedRateCards: RateCardRecord[];
   batches: NormalizedIngestionBatch[];
-  activeTab: 'dashboard' | 'ingest' | 'clients' | 'collection';
-  setActiveTab: (tab: 'dashboard' | 'ingest' | 'clients' | 'collection') => void;
+  activeTab: 'dashboard' | 'ingest' | 'clients' | 'coverage' | 'collection';
+  setActiveTab: (tab: 'dashboard' | 'ingest' | 'clients' | 'coverage' | 'collection') => void;
   previewData: IngestionPreviewData | null;
   setPreviewData: (data: IngestionPreviewData | null) => void;
   filters: RateCardFilterState;
@@ -63,6 +67,11 @@ interface RateCardContextType {
   ) => Promise<void>;
   /** Send a client back to the review list. */
   unresolveClient: (uploadedClient: string) => Promise<void>;
+  /** Assignment actuals, or null until loaded. Fetched on demand, not at boot. */
+  assignmentActuals: AssignmentActualRow[] | null;
+  /** Null while idle, true while the fetch is in flight. */
+  actualsLoading: boolean;
+  loadAssignmentActuals: () => Promise<void>;
   ingestNewBatch: (
     records: RateCardRecord[],
     sourceFileName: string,
@@ -83,13 +92,15 @@ const RateCardContext = createContext<RateCardContextType | undefined>(undefined
 export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [rateCards, setRateCards] = useState<RateCardRecord[]>([]);
   const [batches, setBatches] = useState<NormalizedIngestionBatch[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'clients' | 'collection'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'clients' | 'coverage' | 'collection'>('dashboard');
   const [previewData, setPreviewData] = useState<IngestionPreviewData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [notificationMessage, setNotificationMessage] = useState<
     { type: 'success' | 'error' | 'info'; text: string } | null
   >(null);
 
+  const [assignmentActuals, setAssignmentActuals] = useState<AssignmentActualRow[] | null>(null);
+  const [actualsLoading, setActualsLoading] = useState<boolean>(false);
   const [clientDirectory, setClientDirectory] = useState<ClientDirectory | null>(null);
   const [clientAliases, setClientAliases] = useState<ClientAlias[]>([]);
 
@@ -367,6 +378,36 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   /**
+   * Fetch the assignment actuals.
+   *
+   * Deliberately on demand rather than at boot: this is the one large read in
+   * the app, and every other screen works without it. Loading it when the app
+   * opens would make the dashboard wait on data only the coverage report uses.
+   */
+  const loadAssignmentActuals = async () => {
+    setActualsLoading(true);
+    try {
+      const { rows, source, warnings } = await fetchAssignmentActuals();
+      setAssignmentActuals(rows);
+      if (source === 'local-seed') {
+        setNotificationMessage({
+          type: 'info',
+          text: `Loaded ${rows.length} assignment row(s) from locally seeded data, not from Domo.`,
+        });
+      } else if (warnings.length) {
+        setNotificationMessage({ type: 'info', text: warnings[0] });
+      }
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not read the assignment actuals: ${err?.message || 'unknown error'}`,
+      });
+    } finally {
+      setActualsLoading(false);
+    }
+  };
+
+  /**
    * Distinct uploaded client strings with how many records each carries, so the
    * review list leads with the clients that matter most. Blank clients are
    * excluded — there is nothing to match.
@@ -408,6 +449,9 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         loadClientDirectoryFromDomo,
         resolveClient,
         unresolveClient,
+        assignmentActuals,
+        actualsLoading,
+        loadAssignmentActuals,
         ingestNewBatch,
         refreshDataset,
         isLoading,
