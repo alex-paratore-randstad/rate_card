@@ -431,8 +431,8 @@ const ResolutionCard: React.FC<{
                 <span className="text-meta">
                   <code>{s.entry.clientCode}</code> · {hoursLabel(s.entry.hours)}
                 </span>
-                {s.entry.countries.length > 0 && (
-                  <span className="text-meta">{countriesLabel(s.entry.countries)}</span>
+                {(s.entry.countries ?? []).length > 0 && (
+                  <span className="text-meta">{countriesLabel(s.entry.countries ?? [])}</span>
                 )}
               </div>
               <span className="text-meta" style={{ flex: 1, minWidth: '200px' }}>

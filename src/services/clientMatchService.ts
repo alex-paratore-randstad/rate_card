@@ -366,7 +366,11 @@ export const collapseDirectoryByClientCode = (
   rows: {
     clientCode: string;
     accountName: string;
+    /** A single country, as the source rows and the legacy stored shape carry. */
     country?: string;
+    /** Several, as an already-collapsed entry carries. Both are accepted so a
+     *  stored directory can be re-collapsed without being taken apart first. */
+    countries?: string[];
     hours?: number;
     latestMonth?: string;
   }[]
@@ -381,7 +385,9 @@ export const collapseDirectoryByClientCode = (
     const code = row.clientCode.trim();
     if (!code) continue;
 
-    const country = (row.country || '').trim();
+    const incoming = [...(row.countries ?? []), ...(row.country ? [row.country] : [])]
+      .map((c) => c.trim())
+      .filter(Boolean);
     const hours = typeof row.hours === 'number' ? row.hours : undefined;
     let bucket = byCode.get(code);
 
@@ -390,7 +396,7 @@ export const collapseDirectoryByClientCode = (
         entry: {
           clientCode: code,
           accountName: row.accountName.trim(),
-          countries: country ? [country] : [],
+          countries: Array.from(new Set(incoming)),
           hours,
           latestMonth: row.latestMonth || undefined,
         },
@@ -399,8 +405,8 @@ export const collapseDirectoryByClientCode = (
       };
       byCode.set(code, bucket);
     } else {
-      if (country && !bucket.entry.countries.includes(country)) {
-        bucket.entry.countries.push(country);
+      for (const country of incoming) {
+        if (!bucket.entry.countries.includes(country)) bucket.entry.countries.push(country);
       }
       if (hours !== undefined) {
         bucket.entry.hours = (bucket.hoursSeen ? bucket.entry.hours ?? 0 : 0) + hours;

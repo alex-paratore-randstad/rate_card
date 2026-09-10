@@ -3,7 +3,10 @@ import {
   NormalizedIngestionBatch,
   ClientAlias,
   ClientDirectory,
+  ClientDirectoryEntry,
 } from '../types/rateCard';
+import { countryKey } from './countryService';
+import { collapseDirectoryByClientCode } from './clientMatchService';
 
 const COLLECTION_RECORDS = 'rate_card_history';
 const COLLECTION_BATCHES = 'rate_card_batches';
@@ -357,6 +360,84 @@ export const saveBatchToDomo = async (batch: NormalizedIngestionBatch): Promise<
 // refresh a single write instead of a delete-then-insert over hundreds of rows.
 // ---------------------------------------------------------------------------
 
+/**
+ * Bring a stored directory entry up to the current shape.
+ *
+ * An earlier version stored one `country` string per entry, before candidates
+ * were collapsed to one per client code and country became a list. Documents
+ * written then are still in the collection, and reading them raw gave the
+ * review screen an entry whose `countries` was undefined — which it
+ * dereferenced, taking the whole page down.
+ *
+ * Migrating on read rather than discarding: unlike the rate card records, which
+ * are re-ingestible from their source file, this data was assembled by hand or
+ * by a dataset read and is worth keeping. Legacy country values go through
+ * `countryKey` because they were stored before canonicalisation existed.
+ */
+const migrateDirectoryEntry = (raw: any): ClientDirectoryEntry | null => {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const clientCode = String(raw.clientCode ?? '').trim();
+  const accountName = String(raw.accountName ?? '').trim();
+  if (!clientCode || !accountName) return null;
+
+  let countries: string[];
+  if (Array.isArray(raw.countries)) {
+    countries = raw.countries.filter((c: unknown) => typeof c === 'string' && c);
+  } else if (typeof raw.country === 'string' && raw.country.trim()) {
+    countries = [countryKey(raw.country)];
+  } else {
+    countries = [];
+  }
+
+  return {
+    clientCode,
+    accountName,
+    countries,
+    hours: typeof raw.hours === 'number' ? raw.hours : undefined,
+    latestMonth: typeof raw.latestMonth === 'string' ? raw.latestMonth : undefined,
+  };
+};
+
+/** Migrate every entry of a stored directory, dropping any that are unusable. */
+const migrateDirectory = (stored: any): ClientDirectory | null => {
+  if (!stored || !Array.isArray(stored.entries)) return null;
+
+  const entries = stored.entries
+    .map(migrateDirectoryEntry)
+    .filter((e: ClientDirectoryEntry | null): e is ClientDirectoryEntry => e !== null);
+
+  const dropped = stored.entries.length - entries.length;
+  if (dropped > 0) {
+    console.warn(`[Domo Collections] Dropped ${dropped} unusable client directory entry/entries.`);
+  }
+  const upgraded = stored.entries.filter((e: any) => e && !Array.isArray(e.countries)).length;
+  if (upgraded > 0) {
+    console.info(
+      `[Domo Collections] Upgraded ${upgraded} client directory entry/entries from the ` +
+        'single-country schema.'
+    );
+  }
+
+  // A directory stored before candidates were collapsed holds one entry per
+  // client per country. Reshaping the field alone would leave the review screen
+  // still offering four identical Xerox candidates, so the collapse runs here
+  // too — it is idempotent, so an already-collapsed directory is unchanged.
+  const { entries: collapsed, notes } = collapseDirectoryByClientCode(entries);
+  if (collapsed.length !== entries.length) {
+    console.info(
+      `[Domo Collections] Collapsed ${entries.length} stored entry/entries into ${collapsed.length} client(s).`
+    );
+  }
+  for (const note of notes) console.warn(`[Domo Collections] ${note}`);
+
+  return {
+    entries: collapsed,
+    loadedAt: typeof stored.loadedAt === 'string' ? stored.loadedAt : '',
+    source: stored.source === 'dataset' ? 'dataset' : 'pasted',
+  };
+};
+
 export const fetchClientDirectory = async (): Promise<ClientDirectory | null> => {
   if ((await probeDomoAccess()) !== 'none') {
     try {
@@ -364,9 +445,9 @@ export const fetchClientDirectory = async (): Promise<ClientDirectory | null> =>
       const withIds = unwrapWithIds<ClientDirectory>(docs);
       // Newest wins if an older write left more than one document behind.
       const usable = withIds
-        .filter((d) => Array.isArray(d.content?.entries))
+        .filter((d) => Array.isArray((d.content as any)?.entries))
         .sort((a, b) => (b.content.loadedAt || '').localeCompare(a.content.loadedAt || ''));
-      return usable.length ? usable[0].content : null;
+      return usable.length ? migrateDirectory(usable[0].content) : null;
     } catch (error) {
       console.error('[Domo Collections] Failed to fetch the client directory:', error);
       throw error;
@@ -376,8 +457,8 @@ export const fetchClientDirectory = async (): Promise<ClientDirectory | null> =>
   const localData = localStorage.getItem(LOCAL_DIRECTORY_KEY);
   if (localData) {
     try {
-      const parsed = JSON.parse(localData) as ClientDirectory;
-      if (Array.isArray(parsed?.entries)) return parsed;
+      const migrated = migrateDirectory(JSON.parse(localData));
+      if (migrated) return migrated;
     } catch {
       // ignore parse errors
     }
