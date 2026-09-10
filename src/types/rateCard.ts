@@ -109,16 +109,27 @@ export interface RateCardFilterState {
 // persisted so it is never asked again.
 // ---------------------------------------------------------------------------
 
-/** One candidate client as Domo knows it. The directory is what we match against. */
+/**
+ * One candidate client as Domo knows it. The directory is what we match against.
+ *
+ * One entry per `rsr_client_code`, never per country. The source emits a row
+ * per client per country, but the join key is the code alone — so splitting
+ * candidates by country asks a reviewer to choose between four rows that all
+ * resolve to the same thing, and divides the hours that tell them which
+ * account matters. Country is a separate dimension of the rate card, scoped
+ * independently, and appears here only as context.
+ */
 export interface ClientDirectoryEntry {
   /** `rsr_client_code` — the canonical, stable id. This is the join key. */
   clientCode: string;
   /** `account_name`, exactly as Domo holds it. */
   accountName: string;
-  country?: string;
+  /** Every country this client operates in, for the reviewer to recognise it by. */
+  countries: string[];
   /**
-   * Billable hours behind the account. Not used in scoring — it is how a
-   * reviewer tells a live account from a dormant one when two names look alike.
+   * Billable hours behind the account, across all its countries. Not used in
+   * scoring — it is how a reviewer tells a live account from a dormant one when
+   * two names look alike.
    */
   hours?: number;
   /** Latest reporting month seen, for the same reason. */

@@ -40,6 +40,16 @@ const hoursLabel = (hours?: number) =>
   hours ? `${Math.round(hours).toLocaleString('en-US')} hrs` : 'no hours on record';
 
 /**
+ * The countries a candidate operates in, as recognition context. Long lists are
+ * truncated — the point is confirming the right account, not enumerating it.
+ */
+const countriesLabel = (countries: string[]): string => {
+  if (!countries.length) return '';
+  if (countries.length <= 3) return countries.join(' · ');
+  return `${countries.slice(0, 3).join(' · ')} +${countries.length - 3} more`;
+};
+
+/**
  * Resolve each uploaded client string onto the client code Domo uses.
  *
  * The screen exists because the two names never match exactly — the card says
@@ -417,9 +427,11 @@ const ResolutionCard: React.FC<{
               <div style={{ display: 'flex', flexDirection: 'column', minWidth: '240px' }}>
                 <span style={{ fontWeight: 600 }}>{s.entry.accountName}</span>
                 <span className="text-meta">
-                  <code>{s.entry.clientCode}</code>
-                  {s.entry.country ? ` · ${s.entry.country}` : ''} · {hoursLabel(s.entry.hours)}
+                  <code>{s.entry.clientCode}</code> · {hoursLabel(s.entry.hours)}
                 </span>
+                {s.entry.countries.length > 0 && (
+                  <span className="text-meta">{countriesLabel(s.entry.countries)}</span>
+                )}
               </div>
               <span className="text-meta" style={{ flex: 1, minWidth: '200px' }}>
                 {s.reason}

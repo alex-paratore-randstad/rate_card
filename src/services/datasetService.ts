@@ -7,6 +7,7 @@ import {
   NUMERIC_COLUMNS,
 } from '../types/domoDatasets';
 import { ClientDirectoryEntry } from '../types/rateCard';
+import { collapseDirectoryByClientCode } from './clientMatchService';
 import { probeDomoAccess } from './domoService';
 
 /**
@@ -360,7 +361,7 @@ export const fetchClientDirectoryFromDataset = async (): Promise<{
   const { rows, source } = await fetchDataset<ClientDirectoryRow>(DATASET_ALIASES.clientDirectory);
   const columns = rows.length ? Object.keys(rows[0] as unknown as Record<string, unknown>) : [];
 
-  const entries: ClientDirectoryEntry[] = [];
+  const perCountry: Parameters<typeof collapseDirectoryByClientCode>[0] = [];
   let skipped = 0;
 
   for (const row of rows) {
@@ -370,7 +371,7 @@ export const fetchClientDirectoryFromDataset = async (): Promise<{
       skipped += 1;
       continue;
     }
-    entries.push({
+    perCountry.push({
       clientCode,
       accountName,
       country: row.rsr_country || undefined,
@@ -379,9 +380,20 @@ export const fetchClientDirectoryFromDataset = async (): Promise<{
     });
   }
 
+  // The dataflow emits one row per client per country; the matcher wants one
+  // candidate per client code.
+  const { entries, notes } = collapseDirectoryByClientCode(perCountry);
+
   if (skipped) {
     console.warn(`[Domo Dataset] Skipped ${skipped} directory row(s) missing a code or name.`);
   }
+  if (perCountry.length !== entries.length) {
+    console.info(
+      `[Domo Dataset] Collapsed ${perCountry.length} per-country row(s) into ${entries.length} client(s).`
+    );
+  }
+  for (const note of notes) console.warn(`[Domo Dataset] ${note}`);
+
   return { entries, source, skipped, rowCount: rows.length, columns };
 };
 

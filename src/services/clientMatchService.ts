@@ -351,6 +351,89 @@ export const clientCodeFor = (uploadedClient: string, aliases: ClientAlias[]): s
 };
 
 /**
+ * Collapse per-country rows into one candidate per client code.
+ *
+ * The directory dataflow groups by client code, account name and country, so a
+ * client operating in four countries arrives as four rows carrying the same
+ * code. Presented as separate candidates they score identically, trip the
+ * ambiguity check, and split the hours a reviewer uses to judge which account
+ * is real — while the thing being chosen between is the same code either way.
+ *
+ * Collapsing by code keeps genuine ambiguity intact: two *different* codes
+ * sharing an account name remain two candidates, which is a real question.
+ */
+export const collapseDirectoryByClientCode = (
+  rows: {
+    clientCode: string;
+    accountName: string;
+    country?: string;
+    hours?: number;
+    latestMonth?: string;
+  }[]
+): { entries: ClientDirectoryEntry[]; notes: string[] } => {
+  const byCode = new Map<
+    string,
+    { entry: ClientDirectoryEntry; hoursSeen: boolean; names: Map<string, number> }
+  >();
+  const notes: string[] = [];
+
+  for (const row of rows) {
+    const code = row.clientCode.trim();
+    if (!code) continue;
+
+    const country = (row.country || '').trim();
+    const hours = typeof row.hours === 'number' ? row.hours : undefined;
+    let bucket = byCode.get(code);
+
+    if (!bucket) {
+      bucket = {
+        entry: {
+          clientCode: code,
+          accountName: row.accountName.trim(),
+          countries: country ? [country] : [],
+          hours,
+          latestMonth: row.latestMonth || undefined,
+        },
+        hoursSeen: hours !== undefined,
+        names: new Map(),
+      };
+      byCode.set(code, bucket);
+    } else {
+      if (country && !bucket.entry.countries.includes(country)) {
+        bucket.entry.countries.push(country);
+      }
+      if (hours !== undefined) {
+        bucket.entry.hours = (bucket.hoursSeen ? bucket.entry.hours ?? 0 : 0) + hours;
+        bucket.hoursSeen = true;
+      }
+      if (row.latestMonth && (!bucket.entry.latestMonth || row.latestMonth > bucket.entry.latestMonth)) {
+        bucket.entry.latestMonth = row.latestMonth;
+      }
+    }
+
+    // Track how much weight sits behind each spelling of the name, so a
+    // disagreement resolves to the dominant one rather than whichever row
+    // happened to arrive first.
+    const name = row.accountName.trim();
+    if (name) bucket.names.set(name, (bucket.names.get(name) ?? 0) + (hours ?? 0));
+  }
+
+  for (const [code, bucket] of byCode) {
+    if (bucket.names.size > 1) {
+      const ranked = Array.from(bucket.names).sort((a, b) => b[1] - a[1]);
+      bucket.entry.accountName = ranked[0][0];
+      notes.push(
+        `Client code ${code} carries ${bucket.names.size} different account names ` +
+          `(${ranked.map(([n]) => `"${n}"`).join(', ')}); kept "${ranked[0][0]}".`
+      );
+    }
+    bucket.entry.countries.sort();
+  }
+
+  return { entries: Array.from(byCode.values()).map((b) => b.entry), notes };
+};
+
+/**
  * Parse a pasted client directory — the quickest way to load candidates before
  * the dataset is mapped into the app.
  *
@@ -362,7 +445,14 @@ export const parseClientDirectory = (
   text: string
 ): { entries: ClientDirectoryEntry[]; errors: string[] } => {
   const errors: string[] = [];
-  const entries: ClientDirectoryEntry[] = [];
+  /** Per-country rows, collapsed to one entry per client code below. */
+  const entries: {
+    clientCode: string;
+    accountName: string;
+    country?: string;
+    hours?: number;
+    latestMonth?: string;
+  }[] = [];
   const seen = new Set<string>();
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -381,10 +471,8 @@ export const parseClientDirectory = (
       errors.push(`Line ${index + 1}: needs at least a client code and an account name.`);
       return;
     }
-    if (seen.has(code)) {
-      errors.push(`Line ${index + 1}: client code "${code}" appears more than once; kept the first.`);
-      return;
-    }
+    // A repeated code is normal: it is the same client in another country, and
+    // the collapse below merges them.
     seen.add(code);
 
     const parsedHours = Number(String(hours ?? '').replace(/[^0-9.-]/g, ''));
@@ -401,5 +489,8 @@ export const parseClientDirectory = (
     errors.push('No usable rows found. Expected: client code, account name, country, hours, latest month.');
   }
 
-  return { entries, errors };
+  // Same collapse as the dataset route: a pasted export carries the same
+  // one-row-per-country shape.
+  const { entries: collapsed, notes } = collapseDirectoryByClientCode(entries);
+  return { entries: collapsed, errors: [...errors, ...notes] };
 };
