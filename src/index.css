@@ -192,19 +192,29 @@ h3 { font-size: 1.1rem; font-weight: 600; }
   color: var(--on-surface-muted);
   background: transparent;
   border: none;
+  /* Reserved so the active state's accent cannot shift the row. */
+  border-bottom: 2px solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
-.nav-tab-button:hover {
-  color: var(--randstad-blue-primary);
-  background-color: rgba(255, 255, 255, 0.6);
+/*
+ * Hover must not resemble selection. It previously used a near-white ground
+ * and the accent text colour, which is what the active state uses — with two
+ * rows of tabs on screen that made a hovered tab read as the selected one.
+ * Hover now only lifts the text; the accent underline belongs to selection
+ * alone.
+ */
+.nav-tab-button:hover:not(.active) {
+  color: var(--on-surface);
+  background-color: rgba(255, 255, 255, 0.45);
 }
 
 .nav-tab-button.active {
   background-color: var(--surface-container-lowest);
   color: var(--randstad-blue-primary);
+  border-bottom-color: var(--randstad-blue-primary);
   box-shadow: 0 2px 8px rgba(0, 29, 53, 0.05);
 }
 
