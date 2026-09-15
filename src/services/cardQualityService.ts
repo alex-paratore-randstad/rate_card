@@ -43,10 +43,10 @@ export interface CardIssue {
  * formula. Real market bands vary title by title, so a dominant ratio is only
  * meaningful when it dominates — a couple of coincidences prove nothing.
  */
-const FORMULA_SHARE = 0.8;
+export const FORMULA_SHARE = 0.8;
 
 /** And this many rows, so three titles cannot look like a pattern. */
-const FORMULA_MIN_ROWS = 4;
+export const FORMULA_MIN_ROWS = 4;
 
 /**
  * How far a ratio may sit from the median and still count as the same ratio.
@@ -58,10 +58,10 @@ const FORMULA_MIN_ROWS = 4;
  * let it through — which is how this check missed the very card it was written
  * for. Genuine market bands differ by whole percent, far outside this.
  */
-const RATIO_TOLERANCE = 0.005;
+export const RATIO_TOLERANCE = 0.005;
 
 /** Above this, a band is too wide to govern anything. */
-const IMPLAUSIBLE_RATIO = 3;
+export const IMPLAUSIBLE_RATIO = 3;
 
 /**
  * Name a ratio as a simple fraction when it is one.

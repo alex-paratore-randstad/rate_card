@@ -8,6 +8,7 @@ import {
   Tags,
   Scale,
   Map,
+  BookOpen,
   LucideIcon,
 } from 'lucide-react';
 import { useRateCard } from '../context/RateCardContext';
@@ -20,7 +21,8 @@ type TabId =
   | 'coverage'
   | 'compliance'
   | 'regional'
-  | 'collection';
+  | 'collection'
+  | 'method';
 
 interface TabDef {
   id: TabId;
@@ -50,9 +52,9 @@ interface TabGroup {
 export const TAB_GROUPS: TabGroup[] = [
   {
     id: 'dashboard',
-    label: 'Rate Command Center',
+    label: 'Command Center',
     icon: LayoutDashboard,
-    members: [{ id: 'dashboard', label: 'Rate Command Center', icon: LayoutDashboard }],
+    members: [{ id: 'dashboard', label: 'Command Center', icon: LayoutDashboard }],
   },
   {
     id: 'ingest',
@@ -84,6 +86,14 @@ export const TAB_GROUPS: TabGroup[] = [
     label: 'Regional',
     icon: Map,
     members: [{ id: 'regional', label: 'Regional', icon: Map }],
+  },
+  // Last, and on its own: it explains every other tab rather than belonging to
+  // one of them, and it is read occasionally rather than worked in.
+  {
+    id: 'method',
+    label: 'Method',
+    icon: BookOpen,
+    members: [{ id: 'method', label: 'Method', icon: BookOpen }],
   },
 ];
 

@@ -13,6 +13,7 @@ import { TitleMatchPanel } from './components/Clients/TitleMatchPanel';
 import { ComplianceReport } from './components/Dashboard/ComplianceReport';
 import { TemplateComplianceReport } from './components/Dashboard/TemplateComplianceReport';
 import { RegionalReport } from './components/Dashboard/RegionalReport';
+import { MethodReference } from './components/Method/MethodReference';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -112,6 +113,9 @@ const MainLayout: React.FC = () => {
         )}
 
         {activeTab === 'collection' && <DatasetViewer />}
+
+        {/* No scope bar: the method does not vary by client or country. */}
+        {activeTab === 'method' && <MethodReference />}
       </main>
 
       <ColumnMappingModal />

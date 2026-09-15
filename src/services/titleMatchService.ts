@@ -38,10 +38,10 @@ export const SUGGEST_FLOOR = 0.42;
 export const AMBIGUOUS_MARGIN = 0.04;
 
 /** Sharing an occupational code lifts a weak string match into view. */
-const TAXONOMY_BONUS = 0.12;
+export const TAXONOMY_BONUS = 0.12;
 
 /** Pay that lands nowhere near the card band pulls a match back down. */
-const BAND_MISMATCH_PENALTY = 0.1;
+export const BAND_MISMATCH_PENALTY = 0.1;
 
 /**
  * How far outside the card band a candidate's pay may sit before it counts
@@ -49,7 +49,7 @@ const BAND_MISMATCH_PENALTY = 0.1;
  * routinely sit a little outside one — so the tolerance is generous and only
  * a real disagreement registers.
  */
-const BAND_TOLERANCE = 0.35;
+export const BAND_TOLERANCE = 0.35;
 
 // ---------------------------------------------------------------------------
 // Candidates
