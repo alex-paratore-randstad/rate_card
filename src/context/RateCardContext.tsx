@@ -46,8 +46,8 @@ interface RateCardContextType {
   /** currentRateCards narrowed by the client and country scope. */
   scopedRateCards: RateCardRecord[];
   batches: NormalizedIngestionBatch[];
-  activeTab: 'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'compliance' | 'collection';
-  setActiveTab: (tab: 'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'compliance' | 'collection') => void;
+  activeTab: 'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'compliance' | 'regional' | 'collection';
+  setActiveTab: (tab: 'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'compliance' | 'regional' | 'collection') => void;
   previewData: IngestionPreviewData | null;
   setPreviewData: (data: IngestionPreviewData | null) => void;
   filters: RateCardFilterState;
@@ -113,7 +113,7 @@ const RateCardContext = createContext<RateCardContextType | undefined>(undefined
 export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [rateCards, setRateCards] = useState<RateCardRecord[]>([]);
   const [batches, setBatches] = useState<NormalizedIngestionBatch[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'compliance' | 'collection'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'compliance' | 'regional' | 'collection'>('dashboard');
   const [previewData, setPreviewData] = useState<IngestionPreviewData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [notificationMessage, setNotificationMessage] = useState<

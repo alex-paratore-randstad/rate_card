@@ -12,6 +12,7 @@ import { CoverageReport } from './components/Dashboard/CoverageReport';
 import { TitleMatchPanel } from './components/Clients/TitleMatchPanel';
 import { ComplianceReport } from './components/Dashboard/ComplianceReport';
 import { TemplateComplianceReport } from './components/Dashboard/TemplateComplianceReport';
+import { RegionalReport } from './components/Dashboard/RegionalReport';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
@@ -100,6 +101,13 @@ const MainLayout: React.FC = () => {
             <ClientScopeBar />
             <ComplianceReport />
             <TemplateComplianceReport />
+          </>
+        )}
+
+        {activeTab === 'regional' && (
+          <>
+            <ClientScopeBar />
+            <RegionalReport />
           </>
         )}
 

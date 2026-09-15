@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, FileUp, Database, Link2, ShieldCheck, Tags, Scale } from 'lucide-react';
+import { LayoutDashboard, FileUp, Database, Link2, ShieldCheck, Tags, Scale, Map } from 'lucide-react';
 import { useRateCard } from '../context/RateCardContext';
 
 export const Navigation: React.FC = () => {
@@ -53,6 +53,14 @@ export const Navigation: React.FC = () => {
       >
         <Scale size={18} />
         <span>Card Compliance</span>
+      </button>
+
+      <button
+        className={`nav-tab-button ${activeTab === 'regional' ? 'active' : ''}`}
+        onClick={() => setActiveTab('regional')}
+      >
+        <Map size={18} />
+        <span>Regional</span>
       </button>
 
       <button
