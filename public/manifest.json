@@ -1,6 +1,9 @@
 {
   "name": "Randstad Rate Card Tracker",
   "version": "1.0.0",
+  "ignore": [
+    "references/**"
+  ],
   "size": {
     "width": 12,
     "height": 8
