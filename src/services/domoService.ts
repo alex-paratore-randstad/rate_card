@@ -5,6 +5,7 @@ import {
   ClientDirectory,
   ClientDirectoryEntry,
   TitleAlias,
+  TitleMapping,
 } from '../types/rateCard';
 import { countryKey } from './countryService';
 import { collapseDirectoryByClientCode } from './clientMatchService';
@@ -17,6 +18,8 @@ const COLLECTION_DIRECTORY = 'rate_card_client_directory';
 const COLLECTION_ALIASES = 'rate_card_client_aliases';
 /** Confirmed card-title to actuals-title pairings; one document each. */
 const COLLECTION_TITLE_ALIASES = 'rate_card_title_aliases';
+/** Uploaded title-to-standard-title mappings; one document each. */
+const COLLECTION_TITLE_MAPPINGS = 'rate_card_title_mappings';
 const COLLECTIONS_BASE = '/domo/datastores/v1/collections';
 
 const LOCAL_RECORDS_KEY = 'randstad_rate_cards';
@@ -24,6 +27,7 @@ const LOCAL_BATCHES_KEY = 'randstad_batches';
 const LOCAL_DIRECTORY_KEY = 'randstad_client_directory';
 const LOCAL_ALIASES_KEY = 'randstad_client_aliases';
 const LOCAL_TITLE_ALIASES_KEY = 'randstad_title_aliases';
+const LOCAL_TITLE_MAPPINGS_KEY = 'randstad_title_mappings';
 
 /** How many collection writes to keep in flight at once. */
 const WRITE_CONCURRENCY = 25;
@@ -715,5 +719,121 @@ export const deleteTitleAlias = async (alias: TitleAlias): Promise<void> => {
   localStorage.setItem(
     LOCAL_TITLE_ALIASES_KEY,
     JSON.stringify(stored.filter((a) => `${a.clientCode}||${a.cardTitleKey}` !== aliasKey))
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Title mappings
+//
+// Stored wholesale rather than row by row, which is the one real difference
+// from the alias collections above.
+//
+// An alias is a decision made once, revised in place, so `saveTitleAlias` reads
+// the collection back before each write to avoid creating a second decision for
+// the same title. Mappings do not arrive that way: a file lands carrying the
+// whole taxonomy, and the new file supersedes the old one entirely. Reusing the
+// alias path would have meant one full collection read per row — several
+// hundred round trips to load one file — to enforce a uniqueness rule the
+// replace already guarantees.
+// ---------------------------------------------------------------------------
+
+const isUsableTitleMapping = (mapping: any): boolean =>
+  !!mapping &&
+  typeof mapping.uploadedTitleKey === 'string' &&
+  mapping.uploadedTitleKey !== '' &&
+  typeof mapping.standardTitle === 'string' &&
+  mapping.standardTitle !== '';
+
+export const fetchTitleMappings = async (): Promise<TitleMapping[]> => {
+  if ((await probeDomoAccess()) !== 'none') {
+    try {
+      const docs = await domoGet(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_MAPPINGS}/documents/`);
+      return unwrapWithIds<TitleMapping>(docs)
+        .filter((d) => isUsableTitleMapping(d.content))
+        .map((d) => ({ ...d.content, id: d.id }));
+    } catch (error) {
+      console.error('[Domo Collections] Failed to fetch title mappings:', error);
+      throw error;
+    }
+  }
+
+  const localData = localStorage.getItem(LOCAL_TITLE_MAPPINGS_KEY);
+  if (localData) {
+    try {
+      return (JSON.parse(localData) as any[]).filter(isUsableTitleMapping) as TitleMapping[];
+    } catch {
+      // ignore parse errors
+    }
+  }
+  return [];
+};
+
+/**
+ * Replace the stored mapping set with the contents of a newly uploaded file.
+ *
+ * The old documents go first and the new ones follow. The reverse order would
+ * survive a failed write with the previous mappings intact, but it would also
+ * leave two mappings for the same title if the write only partly succeeded —
+ * and a taxonomy that silently disagrees with itself is worse than one that is
+ * briefly empty. The file is on disk and can be uploaded again; a duplicate key
+ * would quietly change what every report groups by.
+ */
+export const replaceTitleMappings = async (
+  mappings: TitleMapping[]
+): Promise<{ saved: TitleMapping[]; failed: number; firstError?: string }> => {
+  if ((await probeDomoAccess()) === 'none') {
+    const stored = mappings.map((m, i) => ({ ...m, id: m.id || `local-mapping-${i}` }));
+    localStorage.setItem(LOCAL_TITLE_MAPPINGS_KEY, JSON.stringify(stored));
+    return { saved: stored, failed: 0 };
+  }
+
+  const existing = await fetchTitleMappings();
+  if (existing.length) {
+    await writeInChunks(existing, (m) =>
+      domoDelete(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_MAPPINGS}/documents/${m.id}`)
+    );
+  }
+
+  const saved: TitleMapping[] = [];
+  let failed = 0;
+  let firstError: string | undefined;
+
+  for (let i = 0; i < mappings.length; i += WRITE_CONCURRENCY) {
+    const slice = mappings.slice(i, i + WRITE_CONCURRENCY);
+    const results = await Promise.allSettled(
+      slice.map(async (mapping) => {
+        const { id, ...content } = mapping;
+        const created = await domoPost(
+          `${COLLECTIONS_BASE}/${COLLECTION_TITLE_MAPPINGS}/documents/`,
+          { content }
+        );
+        return { ...mapping, id: String(created?.id ?? '') };
+      })
+    );
+    for (const result of results) {
+      if (result.status === 'fulfilled') saved.push(result.value);
+      else {
+        failed += 1;
+        firstError = firstError ?? String(result.reason?.message ?? result.reason);
+      }
+    }
+  }
+
+  if (failed) {
+    console.warn(`[Domo Collections] ${failed} title mapping write(s) failed. First: ${firstError}`);
+  }
+  return { saved, failed, firstError };
+};
+
+/** Remove every stored mapping. */
+export const clearTitleMappings = async (): Promise<void> => {
+  if ((await probeDomoAccess()) === 'none') {
+    localStorage.removeItem(LOCAL_TITLE_MAPPINGS_KEY);
+    return;
+  }
+  const existing = await fetchTitleMappings();
+  if (!existing.length) return;
+  await writeInChunks(existing, (m) =>
+    domoDelete(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_MAPPINGS}/documents/${m.id}`)
   );
 };

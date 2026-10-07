@@ -343,6 +343,53 @@
       ]
     },
     {
+      "name": "rate_card_title_mappings",
+      "schema": {
+        "columns": [
+          {
+            "name": "uploadedTitle",
+            "type": "STRING"
+          },
+          {
+            "name": "uploadedTitleKey",
+            "type": "STRING"
+          },
+          {
+            "name": "standardTitle",
+            "type": "STRING"
+          },
+          {
+            "name": "standardTitleKey",
+            "type": "STRING"
+          },
+          {
+            "name": "family",
+            "type": "STRING"
+          },
+          {
+            "name": "level",
+            "type": "STRING"
+          },
+          {
+            "name": "sourceFileName",
+            "type": "STRING"
+          },
+          {
+            "name": "uploadedAt",
+            "type": "DATETIME"
+          }
+        ]
+      },
+      "syncEnabled": true,
+      "defaultPermission": [
+        "read",
+        "read_content",
+        "create_content",
+        "update_content",
+        "delete_content"
+      ]
+    },
+    {
       "name": "rate_card_client_aliases",
       "schema": {
         "columns": [

@@ -308,3 +308,71 @@ export interface TitleResolution {
   alias?: TitleAlias;
   suggestions: TitleMatchSuggestion[];
 }
+
+// ---------------------------------------------------------------------------
+// Title mappings
+//
+// A different thing from a TitleAlias, despite both pairing up job titles.
+//
+// A TitleAlias resolves a card title onto a title Domo already holds, per
+// client, so a report can join the two. A TitleMapping resolves an uploaded
+// title onto *our own* standard title, and is uploaded as a file rather than
+// decided in the app. It needs no Domo connection and no client scope: a
+// standard-title taxonomy is the same taxonomy at every account, which is what
+// makes it worth having. Keeping them apart means neither has to compromise —
+// the matcher keeps its per-client caution, and the taxonomy stays global.
+// ---------------------------------------------------------------------------
+
+/** One row of the uploaded mapping file. */
+export interface TitleMapping {
+  /** Domo collection document id. */
+  id: string;
+  /** The title as it appears in an ingested rate card. */
+  uploadedTitle: string;
+  /** `normalizeJobTitle(uploadedTitle)` — the lookup key. */
+  uploadedTitleKey: string;
+  /** The standard title it resolves to. */
+  standardTitle: string;
+  standardTitleKey: string;
+  /** Optional groupings the file may carry. */
+  family?: string;
+  level?: string;
+  sourceFileName?: string;
+  uploadedAt: string;
+}
+
+/** Fields a column of the mapping file can be mapped onto. */
+export type MappingTargetField =
+  | 'uploadedTitle'
+  | 'standardTitle'
+  | 'family'
+  | 'level'
+  | 'ignore';
+
+/** A proposed column assignment, shown for confirmation before the file loads. */
+export interface MappingColumn {
+  rawHeader: string;
+  targetField: MappingTargetField;
+  confidence: number;
+  sampleValues: string[];
+}
+
+/** An uploaded mapping file, read but not yet stored. */
+export interface TitleMappingPreview {
+  fileName: string;
+  /** Which workbook tab it was read from. */
+  sheetName: string;
+  /** Other tabs that held rows, so a wrong pick is visible. */
+  otherSheets: string[];
+  headers: string[];
+  rows: Record<string, any>[];
+  columns: MappingColumn[];
+}
+
+/** How an uploaded card title stands against the mapping file. */
+export interface MappingCoverage {
+  mapped: { uploadedTitle: string; standardTitle: string; recordCount: number }[];
+  unmapped: { uploadedTitle: string; recordCount: number }[];
+  /** Mappings that match no title in any ingested card — likely stale rows. */
+  unusedMappings: number;
+}

@@ -9,20 +9,13 @@ import {
   Scale,
   Map,
   BookOpen,
+  TableProperties,
+  Layers,
+  ClipboardCheck,
   LucideIcon,
 } from 'lucide-react';
 import { useRateCard } from '../context/RateCardContext';
-
-type TabId =
-  | 'dashboard'
-  | 'ingest'
-  | 'clients'
-  | 'titles'
-  | 'coverage'
-  | 'compliance'
-  | 'regional'
-  | 'collection'
-  | 'method';
+import { TabId } from '../types/navigation';
 
 interface TabDef {
   id: TabId;
@@ -38,23 +31,35 @@ interface TabGroup {
 }
 
 /**
- * Top-level navigation, grouped.
+ * Top-level navigation, grouped by where the data comes from.
  *
- * Eight flat tabs asked the reader to hold the whole app in their head to find
- * anything. Screens that are steps of one job now share a group and a second
- * row appears inside it — matching is one job done twice, and the three
- * card-versus-actuals views are read together.
+ * That is the organising idea, and it is worth stating because an earlier
+ * grouping used a different one. Tabs were previously gathered by what they
+ * were *for* — matching here, reports there — which read sensibly but hid the
+ * thing that actually determines whether a screen works: six of them do
+ * nothing at all without a live Domo connection and a round of manual
+ * matching, and they sat interleaved with the screens that only need an
+ * uploaded file. Someone with a spreadsheet and no connection had no way to
+ * tell which half of the app was theirs.
+ *
+ * So everything built on the uploaded rate card comes first, and everything
+ * needing the connected datasets is gathered under Supplemental Data. Method
+ * stays last and alone: it explains every other tab rather than belonging to
+ * one.
  *
  * `activeTab` stays a flat id rather than becoming a group plus a member. The
- * grouping is presentation, every existing route still resolves, and a group
- * is active when any of its members is.
+ * grouping is presentation, every existing route still resolves, and a group is
+ * active when any of its members is.
  */
 export const TAB_GROUPS: TabGroup[] = [
   {
     id: 'dashboard',
     label: 'Command Center',
     icon: LayoutDashboard,
-    members: [{ id: 'dashboard', label: 'Command Center', icon: LayoutDashboard }],
+    members: [
+      { id: 'dashboard', label: 'Rate Card', icon: TableProperties },
+      { id: 'collection', label: 'Records', icon: Layers },
+    ],
   },
   {
     id: 'ingest',
@@ -63,32 +68,32 @@ export const TAB_GROUPS: TabGroup[] = [
     members: [{ id: 'ingest', label: 'Ingest Rate Card', icon: FileUp }],
   },
   {
+    id: 'reports',
+    label: 'Reports',
+    icon: ClipboardCheck,
+    members: [{ id: 'cardquality', label: 'Card Quality', icon: ShieldCheck }],
+  },
+  {
     id: 'matching',
     label: 'Matching',
     icon: Link2,
+    members: [{ id: 'mappings', label: 'Title Mappings', icon: Tags }],
+  },
+  // Everything from here needs the connected datasets. Grouped together so the
+  // "load actuals" prompt is a property of one area rather than a surprise on
+  // five separate screens.
+  {
+    id: 'supplemental',
+    label: 'Supplemental Data',
+    icon: Database,
     members: [
       { id: 'clients', label: 'Clients', icon: Link2 },
       { id: 'titles', label: 'Titles', icon: Tags },
-    ],
-  },
-  {
-    id: 'reports',
-    label: 'Reports',
-    icon: Scale,
-    members: [
       { id: 'coverage', label: 'Card Coverage', icon: ShieldCheck },
       { id: 'compliance', label: 'Card Compliance', icon: Scale },
-      { id: 'collection', label: 'Collection Dataset', icon: Database },
+      { id: 'regional', label: 'Regional', icon: Map },
     ],
   },
-  {
-    id: 'regional',
-    label: 'Regional',
-    icon: Map,
-    members: [{ id: 'regional', label: 'Regional', icon: Map }],
-  },
-  // Last, and on its own: it explains every other tab rather than belonging to
-  // one of them, and it is read occasionally rather than worked in.
   {
     id: 'method',
     label: 'Method',
@@ -110,7 +115,7 @@ export const Navigation: React.FC = () => {
    */
   const lastVisited = useRef<Record<string, TabId>>({});
   useEffect(() => {
-    lastVisited.current[groupFor(activeTab).id] = activeTab as TabId;
+    lastVisited.current[groupFor(activeTab).id] = activeTab;
   }, [activeTab]);
 
   const current = groupFor(activeTab);
@@ -153,7 +158,7 @@ export const Navigation: React.FC = () => {
 const SubNavigation: React.FC<{
   group: TabGroup;
   activeTab: string;
-  onSelect: (tab: any) => void;
+  onSelect: (tab: TabId) => void;
 }> = ({ group, activeTab, onSelect }) => (
   <div
     className="navigation-tabs"

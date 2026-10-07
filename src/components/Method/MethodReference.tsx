@@ -10,6 +10,7 @@ import {
   Map as MapIcon,
   FileWarning,
   SlidersHorizontal,
+  TableProperties,
 } from 'lucide-react';
 import * as ClientMatch from '../../services/clientMatchService';
 import * as TitleMatch from '../../services/titleMatchService';
@@ -132,6 +133,66 @@ export const MethodReference: React.FC = () => (
         function.
       </div>
     </div>
+
+    <Section
+      icon={<TableProperties size={20} color="var(--randstad-blue-primary)" />}
+      title="Rate card and variance"
+      subtitle="The uploaded card on its own. No Domo data is involved in anything here."
+    >
+      <Calc
+        name="Rate per role"
+        answers="What does the card say this role pays?"
+        instead={
+          <>
+            picking the first matching record would be arbitrary. A card commonly carries several
+            rows for one title — one per region, say — and whichever happened to sort first would
+            become the card's answer, changing with the file's row order rather than with the
+            rates.
+          </>
+        }
+      >
+        <Formula>{`row key   = jobTitle + labor type
+min, max  = mean of every card record sharing that key, within one rate year`}</Formula>
+        The table says so when it has averaged anything, because an averaged band is a summary of
+        several bands rather than a band anyone agreed.
+      </Calc>
+
+      <Calc
+        name="Variance"
+        answers="How did the rate move between two years?"
+        instead={
+          <>
+            measuring every year against the first selected one answers a different question —
+            cumulative drift from a baseline rather than this year's movement. Year over year was
+            chosen because it is the number that reads the same whichever years happen to be
+            loaded.
+          </>
+        }
+      >
+        <Formula>{`variance = (this year − previous year) ÷ previous year
+
+measured against the previous SELECTED year, not the first:
+  2025 → 2026 → 2027  gives  (2026 vs 2025) and (2027 vs 2026)`}</Formula>
+        Reported on the minimum and the maximum separately. A card whose minimum rose while its
+        maximum held is a real change, and a max-only variance — which is what the source
+        workbook's <code>=(F2-D2)/D2</code> computes — reports it as 0.00%.
+      </Calc>
+
+      <Calc name="When variance is not shown" answers="Why is there an em-dash instead of 0.00%?">
+        <Formula>{`null when  the role is absent from either year
+           or the earlier year's rate is zero`}</Formula>
+        Rendered as an em-dash. <code>0.00%</code> would read as &ldquo;no change&rdquo;, which is
+        a much more reassuring claim than &ldquo;not comparable&rdquo;.
+      </Calc>
+
+      <Calc name="Which upload counts" answers="A year was uploaded twice — which one is shown?">
+        <Formula>{`supersede key = rateYear + client + country
+the newest uploadedAt for each key wins`}</Formula>
+        Client and country are in the key deliberately. Keyed on the year alone, a file covering
+        only the US would supersede every other market's records for that year and silently drop
+        them. Superseded records stay stored, and the Records tab shows them.
+      </Calc>
+    </Section>
 
     <Section
       icon={<Filter size={20} color="var(--randstad-blue-primary)" />}
@@ -288,6 +349,63 @@ auto-accept ≥ ${TitleMatch.AUTO_RESOLVE_SCORE} · propose ≥ ${TitleMatch.SUG
     </Section>
 
     <Section
+      icon={<Tags size={20} color="var(--randstad-blue-primary)" />}
+      title="Title mappings"
+      subtitle="Uploaded as a file. Not the same thing as title matching, above."
+    >
+      <Calc
+        name="What it is"
+        answers="How does this differ from the title matcher?"
+        instead={
+          <>
+            storing both in one place would have forced a compromise. A match is a judgement about
+            two systems and is only safe per client; a taxonomy is a decision already taken
+            elsewhere and holds everywhere. Merging them would mean either scoping the taxonomy
+            per client for no reason, or widening a per-client match to every account.
+          </>
+        }
+      >
+        <Formula>{`title matching   card title  →  Domo title_cleaned   per client, scored, confirmed
+title mapping    card title  →  standard title      global, uploaded, no scoring`}</Formula>
+        The two are stored separately and neither reads the other. Only the matcher feeds the
+        Supplemental Data reports.
+      </Calc>
+
+      <Calc name="The key" answers="How does a mapping find a card title?">
+        <Formula>{`key = normalise(title)   — the same normalisation the matcher uses`}</Formula>
+        So a mapping written for <code>Sr. Software Eng. II</code> finds a card row spelled{' '}
+        <em>Senior Software Engineer 2</em> without the file having to anticipate the spelling.
+        Building the key any other way would create a second, quietly different notion of what
+        makes two titles the same.
+      </Calc>
+
+      <Calc
+        name="Loading a file"
+        answers="What happens to the mappings already stored?"
+        instead={
+          <>
+            merging would keep retired mappings alive invisibly — a title the new file no longer
+            lists would go on being mapped by the old one, with no way to tell and nothing to
+            delete it.
+          </>
+        }
+      >
+        <Formula>{`a new file REPLACES the stored set entirely
+
+rows dropped   missing either title            counted, not stored blank
+duplicates     same uploaded title twice       first kept, rest counted`}</Formula>
+      </Calc>
+
+      <Calc name="Coverage" answers="How much of the card does the file explain?">
+        <Formula>{`mapped / unmapped counted in RECORDS, not distinct titles
+unused mappings = file rows matching no ingested title`}</Formula>
+        Weighted by records because twenty unmapped titles carrying one row each matter less than
+        one carrying two hundred. The unused count runs the other way, and is how a taxonomy
+        built for a different account shows itself.
+      </Calc>
+    </Section>
+
+    <Section
       icon={<ShieldCheck size={20} color="var(--randstad-blue-primary)" />}
       title="Card coverage"
       subtitle="Which work the card governs. No rates compared."
@@ -429,7 +547,7 @@ tiers matter when the spread exceeds ${pct(Regional.MATERIAL_SPREAD)}`}</Formula
     <Section
       icon={<FileWarning size={20} color="var(--status-error)" />}
       title="Card quality checks"
-      subtitle="Run at upload and again on the compliance tab."
+      subtitle="Run at upload, on the Reports tab, and again on the compliance tab."
     >
       <Calc
         name="Formula-derived band"

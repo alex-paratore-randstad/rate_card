@@ -11,7 +11,9 @@ import {
   ClientResolution,
   TitleAlias,
   TitleMatchMethod,
+  TitleMapping,
 } from '../types/rateCard';
+import { TabId } from '../types/navigation';
 import {
   fetchHistoricalRateCards,
   saveRateCardsToDomo,
@@ -27,6 +29,9 @@ import {
   fetchTitleAliases,
   saveTitleAliases,
   deleteTitleAlias,
+  fetchTitleMappings,
+  replaceTitleMappings,
+  clearTitleMappings as clearStoredTitleMappings,
 } from '../services/domoService';
 import { normalizeClientName, resolveClients } from '../services/clientMatchService';
 import {
@@ -46,8 +51,8 @@ interface RateCardContextType {
   /** currentRateCards narrowed by the client and country scope. */
   scopedRateCards: RateCardRecord[];
   batches: NormalizedIngestionBatch[];
-  activeTab: 'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'compliance' | 'regional' | 'collection' | 'method';
-  setActiveTab: (tab: 'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'compliance' | 'regional' | 'collection' | 'method') => void;
+  activeTab: TabId;
+  setActiveTab: (tab: TabId) => void;
   previewData: IngestionPreviewData | null;
   setPreviewData: (data: IngestionPreviewData | null) => void;
   filters: RateCardFilterState;
@@ -88,6 +93,12 @@ interface RateCardContextType {
   ) => Promise<void>;
   /** Send a title back to the queue. */
   unresolveTitle: (clientCode: string, cardTitle: string) => Promise<void>;
+  /** Uploaded title-to-standard-title mappings. Needs no Domo connection. */
+  titleMappings: TitleMapping[];
+  /** Replace the stored set with a newly uploaded file. */
+  loadTitleMappings: (mappings: TitleMapping[]) => Promise<boolean>;
+  /** Discard every stored mapping. */
+  clearTitleMappings: () => Promise<void>;
   /** Assignment actuals, or null until loaded. Fetched on demand, not at boot. */
   assignmentActuals: AssignmentActualRow[] | null;
   /** Null while idle, true while the fetch is in flight. */
@@ -113,7 +124,7 @@ const RateCardContext = createContext<RateCardContextType | undefined>(undefined
 export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [rateCards, setRateCards] = useState<RateCardRecord[]>([]);
   const [batches, setBatches] = useState<NormalizedIngestionBatch[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'ingest' | 'clients' | 'titles' | 'coverage' | 'compliance' | 'regional' | 'collection' | 'method'>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [previewData, setPreviewData] = useState<IngestionPreviewData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [notificationMessage, setNotificationMessage] = useState<
@@ -125,6 +136,7 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [clientDirectory, setClientDirectory] = useState<ClientDirectory | null>(null);
   const [clientAliases, setClientAliases] = useState<ClientAlias[]>([]);
   const [titleAliases, setTitleAliases] = useState<TitleAlias[]>([]);
+  const [titleMappings, setTitleMappings] = useState<TitleMapping[]>([]);
 
   const [filters, setFilters] = useState<RateCardFilterState>({ client: 'ALL', country: 'ALL' });
   const [domoAccess, setDomoAccess] = useState<DomoAccess | null>(null);
@@ -141,16 +153,18 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       // provisioned yet the reports must still load, so these failures are
       // logged rather than thrown.
       try {
-        const [directory, aliases, titles] = await Promise.all([
+        const [directory, aliases, titles, mappings] = await Promise.all([
           fetchClientDirectory(),
           fetchClientAliases(),
           fetchTitleAliases(),
+          fetchTitleMappings(),
         ]);
         setClientDirectory(directory);
         setClientAliases(aliases);
         setTitleAliases(titles);
+        setTitleMappings(mappings);
       } catch (err) {
-        console.warn('[Client matching] Could not load the directory or aliases:', err);
+        console.warn('[Matching] Could not load the directory, aliases or mappings:', err);
       }
     } catch (err: any) {
       console.error('Failed to load rate card data:', err);
@@ -483,6 +497,54 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   /**
+   * Replace the stored mappings with a newly uploaded file.
+   *
+   * A whole-set replace rather than a merge: the file is the taxonomy, so a
+   * title it no longer lists has been removed from it deliberately. Merging
+   * would keep retired mappings alive invisibly, and there would be no way to
+   * delete one except by hand.
+   */
+  const loadTitleMappings: RateCardContextType['loadTitleMappings'] = async (mappings) => {
+    try {
+      const { saved, failed, firstError } = await replaceTitleMappings(mappings);
+      setTitleMappings(saved);
+
+      if (failed) {
+        setNotificationMessage({
+          type: 'error',
+          text:
+            `Stored ${saved.length} of ${mappings.length} title mappings; ${failed} failed.` +
+            (firstError ? ` First error: ${firstError}` : ''),
+        });
+        return false;
+      }
+      setNotificationMessage({
+        type: 'success',
+        text: `Stored ${saved.length} title mapping${saved.length === 1 ? '' : 's'}.`,
+      });
+      return true;
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not store the title mappings: ${err?.message || 'unknown error'}`,
+      });
+      return false;
+    }
+  };
+
+  const clearTitleMappings = async () => {
+    try {
+      await clearStoredTitleMappings();
+      setTitleMappings([]);
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not clear the title mappings: ${err?.message || 'unknown error'}`,
+      });
+    }
+  };
+
+  /**
    * Fetch the assignment actuals.
    *
    * Deliberately on demand rather than at boot: this is the one large read in
@@ -557,6 +619,9 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         titleAliases,
         resolveTitleMatches,
         unresolveTitle,
+        titleMappings,
+        loadTitleMappings,
+        clearTitleMappings,
         assignmentActuals,
         actualsLoading,
         loadAssignmentActuals,

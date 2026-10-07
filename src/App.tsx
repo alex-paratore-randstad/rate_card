@@ -3,7 +3,7 @@ import { RateCardProvider, useRateCard } from './context/RateCardContext';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
 import { ClientScopeBar } from './components/Dashboard/ClientScopeBar';
-import { PayVarianceTable } from './components/Dashboard/PayVarianceTable';
+import { RateCardTable } from './components/Dashboard/RateCardTable';
 import { FileUploader } from './components/Ingestion/FileUploader';
 import { ColumnMappingModal } from './components/Ingestion/ColumnMappingModal';
 import { DatasetViewer } from './components/Collection/DatasetViewer';
@@ -13,6 +13,8 @@ import { TitleMatchPanel } from './components/Clients/TitleMatchPanel';
 import { ComplianceReport } from './components/Dashboard/ComplianceReport';
 import { TemplateComplianceReport } from './components/Dashboard/TemplateComplianceReport';
 import { RegionalReport } from './components/Dashboard/RegionalReport';
+import { CardQualityReport } from './components/Reports/CardQualityReport';
+import { TitleMappingPanel } from './components/Mapping/TitleMappingPanel';
 import { MethodReference } from './components/Method/MethodReference';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
 
@@ -63,17 +65,34 @@ const MainLayout: React.FC = () => {
 
         <Navigation />
 
-        {/* Reporting is scoped to the pay variance view for now. The other
-            dashboard cards are unmounted rather than deleted — their components
-            are still in src/components/Dashboard if they are wanted back. */}
+        {/* Command Center — the uploaded rate card, read two ways. */}
         {activeTab === 'dashboard' && (
           <>
             <ClientScopeBar />
-            <PayVarianceTable />
+            <RateCardTable />
           </>
         )}
 
+        {activeTab === 'collection' && <DatasetViewer />}
+
         {activeTab === 'ingest' && <FileUploader />}
+
+        {/* Reports — built on the uploaded cards alone, so no Domo prompt. */}
+        {activeTab === 'cardquality' && (
+          <>
+            <ClientScopeBar />
+            <CardQualityReport />
+          </>
+        )}
+
+        {/* Matching — the uploaded mapping file. The scope bar drives the
+            coverage figure, which is about the cards in scope. */}
+        {activeTab === 'mappings' && (
+          <>
+            <ClientScopeBar />
+            <TitleMappingPanel />
+          </>
+        )}
 
         {activeTab === 'clients' && <ClientMatchPanel />}
 
@@ -112,7 +131,6 @@ const MainLayout: React.FC = () => {
           </>
         )}
 
-        {activeTab === 'collection' && <DatasetViewer />}
 
         {/* No scope bar: the method does not vary by client or country. */}
         {activeTab === 'method' && <MethodReference />}
