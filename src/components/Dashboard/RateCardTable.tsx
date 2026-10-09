@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Search, TableProperties, Plus, X } from 'lucide-react';
+import { Search, TableProperties, Plus, X, ChevronRight, ChevronDown } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
 import { formatDateRandstad } from '../../utils/formatters';
+import { normalizeJobTitle } from '../../services/titleService';
 
 /**
  * The uploaded rate card, read across however many years are loaded.
@@ -59,8 +60,48 @@ interface TitleRow {
   byYear: Map<string, YearCell>;
 }
 
+/**
+ * One standard title and the card titles resolved onto it.
+ *
+ * A card title with no standard title is a group of one under its own name,
+ * flagged, so grouping never drops a row — it only merges the ones the list
+ * says are the same role.
+ */
+interface GroupRow {
+  label: string;
+  laborType: string;
+  matched: boolean;
+  members: TitleRow[];
+  byYear: Map<string, YearCell>;
+}
+
+type Grouping = 'standard' | 'card';
+
+/** Mean of a set of percent changes, or null when none is comparable. */
+const meanChange = (values: (number | null)[]): number | null => {
+  const usable = values.filter((v): v is number => v !== null);
+  return usable.length ? usable.reduce((a, b) => a + b, 0) / usable.length : null;
+};
+
+/**
+ * Variance for a grouped row: the average change of its card titles, each
+ * compared with itself. Comparing the group's averages instead would let a
+ * senior title that only appears in the later year read as a rate rise.
+ */
+const groupChange = (
+  row: GroupRow,
+  from: string | undefined,
+  to: string,
+  measure: 'min' | 'max'
+): number | null =>
+  from === undefined
+    ? null
+    : meanChange(
+        row.members.map((m) => change(m.byYear.get(from)?.[measure], m.byYear.get(to)?.[measure]))
+      );
+
 export const RateCardTable: React.FC = () => {
-  const { scopedRateCards } = useRateCard();
+  const { scopedRateCards, titleMappings } = useRateCard();
 
   /**
    * Years the reader has set aside, rather than the years they have chosen.
@@ -72,6 +113,17 @@ export const RateCardTable: React.FC = () => {
    */
   const [hiddenYears, setHiddenYears] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState<string>('');
+  const hasStandards = titleMappings.length > 0;
+  const [groupingChoice, setGrouping] = useState<Grouping>('standard');
+  // Without any standard titles there is nothing to group by.
+  const grouping: Grouping = hasStandards ? groupingChoice : 'card';
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const standardFor = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of titleMappings) if (m.standardTitle) map.set(m.uploadedTitleKey, m.standardTitle);
+    return map;
+  }, [titleMappings]);
 
   // Ascending, so year-over-year reads left to right like the calendar.
   const years = useMemo(
@@ -134,17 +186,73 @@ export const RateCardTable: React.FC = () => {
       return { jobTitle: entry.jobTitle, laborType: entry.laborType, byYear };
     });
 
+    built.sort((a, b) => a.jobTitle.localeCompare(b.jobTitle, undefined, { numeric: true }));
+
+    // Group, then average each year over the group's records — the same
+    // record-weighted mean a single title already gets across its records.
+    const groups = new Map<string, GroupRow & { sums: Map<string, { minSum: number; maxSum: number; count: number }> }>();
+    for (const row of built) {
+      const standard =
+        grouping === 'standard' ? standardFor.get(normalizeJobTitle(row.jobTitle)) : undefined;
+      const label = standard ?? row.jobTitle;
+      const key = `${standard ? 's' : 'c'}||${label}||${row.laborType}`;
+      const group = groups.get(key) ?? {
+        label,
+        laborType: row.laborType,
+        matched: !!standard,
+        members: [] as TitleRow[],
+        byYear: new Map(),
+        sums: new Map(),
+      };
+      group.members.push(row);
+      for (const [year, cell] of row.byYear) {
+        const sum = group.sums.get(year) ?? { minSum: 0, maxSum: 0, count: 0 };
+        sum.minSum += cell.min * cell.count;
+        sum.maxSum += cell.max * cell.count;
+        sum.count += cell.count;
+        group.sums.set(year, sum);
+      }
+      groups.set(key, group);
+    }
+
+    const grouped: GroupRow[] = Array.from(groups.values()).map(({ sums, ...group }) => {
+      for (const [year, sum] of sums) {
+        if (sum.count > 1) collapsed = true;
+        group.byYear.set(year, {
+          min: sum.minSum / sum.count,
+          max: sum.maxSum / sum.count,
+          count: sum.count,
+        });
+      }
+      return group;
+    });
+
+    // A group shows if its label or any of its card titles matches, so
+    // searching a client's spelling still finds the standard row it went into.
     const term = search.trim().toLowerCase();
     const filtered = term
-      ? built.filter(
-          (r) =>
-            r.jobTitle.toLowerCase().includes(term) || r.laborType.toLowerCase().includes(term)
+      ? grouped.filter(
+          (g) =>
+            g.label.toLowerCase().includes(term) ||
+            g.laborType.toLowerCase().includes(term) ||
+            g.members.some((m) => m.jobTitle.toLowerCase().includes(term))
         )
-      : built;
+      : grouped;
 
-    filtered.sort((a, b) => a.jobTitle.localeCompare(b.jobTitle, undefined, { numeric: true }));
+    filtered.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
     return { rows: filtered, aggregated: collapsed };
-  }, [scopedRateCards, shownYears.join('|'), search]);
+  }, [scopedRateCards, shownYears.join('|'), search, grouping, standardFor]);
+
+  const merged = rows.some((g) => g.members.length > 1);
+  const unmatched = grouping === 'standard' ? rows.filter((g) => !g.matched).length : 0;
+
+  const toggleExpanded = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   /** "uploaded 19 August 2026" — the tracked upload date, made visible. */
   const uploadNote = (year: string): string | null => {
@@ -199,29 +307,57 @@ export const RateCardTable: React.FC = () => {
               : `${shownYears.length} rate years, USD · variance against the previous year shown, ` +
                 'and a negative variance is a rate decrease'}
           </span>
-          {aggregated && (
-            <div style={{ marginTop: '6px' }}>
-              <span className="status-pill info">
-                Some roles hold several records in a year — rates shown are averaged per role
-              </span>
+          {(aggregated || (grouping === 'standard' && merged) || unmatched > 0) && (
+            <div style={{ marginTop: '6px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {aggregated && (
+                <span className="status-pill info">
+                  Some roles hold several records in a year — rates shown are averaged per role
+                </span>
+              )}
+              {grouping === 'standard' && merged && (
+                <span className="status-pill info">
+                  Grouped rows average their card titles; their variance is the average change of
+                  each card title against itself
+                </span>
+              )}
+              {unmatched > 0 && (
+                <span className="status-pill warning">
+                  {unmatched} role{unmatched === 1 ? '' : 's'} with no standard title, shown under
+                  the card title
+                </span>
+              )}
             </div>
           )}
         </div>
 
-        <div style={{ position: 'relative', width: '240px' }}>
-          <Search
-            size={16}
-            color="#415E7D"
-            style={{ position: 'absolute', left: '12px', top: '12px' }}
-          />
-          <input
-            type="text"
-            className="form-control"
-            style={{ paddingLeft: '36px' }}
-            placeholder="Search job title or labor type..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+          {hasStandards && (
+            <select
+              className="form-control"
+              style={{ width: '190px' }}
+              value={grouping}
+              onChange={(e) => setGrouping(e.target.value as Grouping)}
+              title="Group the rows"
+            >
+              <option value="standard">By standard title</option>
+              <option value="card">By card title</option>
+            </select>
+          )}
+          <div style={{ position: 'relative', width: '240px' }}>
+            <Search
+              size={16}
+              color="#415E7D"
+              style={{ position: 'absolute', left: '12px', top: '12px' }}
+            />
+            <input
+              type="text"
+              className="form-control"
+              style={{ paddingLeft: '36px' }}
+              placeholder="Search job title or labor type..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
         </div>
       </div>
 
@@ -291,7 +427,7 @@ export const RateCardTable: React.FC = () => {
         <table className="randstad-table">
           <thead>
             <tr>
-              <th rowSpan={2}>Job Titles</th>
+              <th rowSpan={2}>{grouping === 'standard' ? 'Standard Title' : 'Job Titles'}</th>
               <th rowSpan={2}>Labor Type</th>
               {shownYears.map((year, i) => (
                 <th
@@ -343,34 +479,104 @@ export const RateCardTable: React.FC = () => {
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
-                <tr key={`${row.jobTitle}||${row.laborType}`}>
-                  <td style={{ fontWeight: 600 }}>{row.jobTitle}</td>
-                  <td>{row.laborType || '—'}</td>
-                  {shownYears.map((year, i) => {
-                    const cell = row.byYear.get(year);
-                    const prior = i > 0 ? row.byYear.get(shownYears[i - 1]) : undefined;
-                    const minVar = change(prior?.min, cell?.min);
-                    const maxVar = change(prior?.max, cell?.max);
-                    const edge =
-                      i === 0 ? undefined : '1px solid var(--outline-variant, #E3E5EC)';
-                    return (
-                      <React.Fragment key={`${row.jobTitle}-${year}`}>
-                        <td style={{ textAlign: 'right', borderLeft: edge }}>
-                          {money(cell?.min)}
-                        </td>
-                        <td style={{ textAlign: 'right' }}>{money(cell?.max)}</td>
-                        {i > 0 && (
-                          <>
-                            <VarianceCell percent={minVar} />
-                            <VarianceCell percent={maxVar} />
-                          </>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tr>
-              ))
+              rows.map((group) => {
+                const key = `${group.matched ? 's' : 'c'}||${group.label}||${group.laborType}`;
+                const isOpen = expanded.has(key);
+                // Worth expanding only when the group hides something: several
+                // card titles, or one spelled differently from the standard.
+                const expandable =
+                  grouping === 'standard' &&
+                  (group.members.length > 1 || group.members[0].jobTitle !== group.label);
+                return (
+                  <React.Fragment key={key}>
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                          {expandable && (
+                            <button
+                              onClick={() => toggleExpanded(key)}
+                              title={isOpen ? 'Hide card titles' : 'Show card titles'}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                padding: 0,
+                                cursor: 'pointer',
+                                color: '#415E7D',
+                                marginTop: '2px',
+                              }}
+                            >
+                              {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                            </button>
+                          )}
+                          <div>
+                            {group.label}
+                            {expandable && (
+                              <div className="text-meta" style={{ fontWeight: 400 }}>
+                                {group.members.length} card title
+                                {group.members.length === 1 ? '' : 's'}
+                              </div>
+                            )}
+                            {grouping === 'standard' && !group.matched && (
+                              <div className="text-meta" style={{ fontWeight: 400 }}>
+                                no standard title
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td>{group.laborType || '—'}</td>
+                      {shownYears.map((year, i) => {
+                        const cell = group.byYear.get(year);
+                        const from = i > 0 ? shownYears[i - 1] : undefined;
+                        const edge =
+                          i === 0 ? undefined : '1px solid var(--outline-variant, #E3E5EC)';
+                        return (
+                          <React.Fragment key={`${key}-${year}`}>
+                            <td style={{ textAlign: 'right', borderLeft: edge }}>
+                              {money(cell?.min)}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>{money(cell?.max)}</td>
+                            {i > 0 && (
+                              <>
+                                <VarianceCell percent={groupChange(group, from, year, 'min')} />
+                                <VarianceCell percent={groupChange(group, from, year, 'max')} />
+                              </>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tr>
+                    {expandable &&
+                      isOpen &&
+                      group.members.map((row) => (
+                        <tr key={`${key}::${row.jobTitle}`} style={{ background: 'rgba(37, 92, 169, 0.04)' }}>
+                          <td style={{ paddingLeft: '34px', color: '#415E7D' }}>{row.jobTitle}</td>
+                          <td style={{ color: '#415E7D' }}>{row.laborType || '—'}</td>
+                          {shownYears.map((year, i) => {
+                            const cell = row.byYear.get(year);
+                            const prior = i > 0 ? row.byYear.get(shownYears[i - 1]) : undefined;
+                            const edge =
+                              i === 0 ? undefined : '1px solid var(--outline-variant, #E3E5EC)';
+                            return (
+                              <React.Fragment key={`${row.jobTitle}-${year}`}>
+                                <td style={{ textAlign: 'right', borderLeft: edge }}>
+                                  {money(cell?.min)}
+                                </td>
+                                <td style={{ textAlign: 'right' }}>{money(cell?.max)}</td>
+                                {i > 0 && (
+                                  <>
+                                    <VarianceCell percent={change(prior?.min, cell?.min)} />
+                                    <VarianceCell percent={change(prior?.max, cell?.max)} />
+                                  </>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                  </React.Fragment>
+                );
+              })
             )}
           </tbody>
         </table>
