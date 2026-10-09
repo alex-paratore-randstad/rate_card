@@ -14,6 +14,7 @@ import { ComplianceReport } from './components/Dashboard/ComplianceReport';
 import { TemplateComplianceReport } from './components/Dashboard/TemplateComplianceReport';
 import { RegionalReport } from './components/Dashboard/RegionalReport';
 import { CardQualityReport } from './components/Reports/CardQualityReport';
+import { RateMovementReport } from './components/Reports/RateMovementReport';
 import { TitleMappingPanel } from './components/Mapping/TitleMappingPanel';
 import { MethodReference } from './components/Method/MethodReference';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
@@ -82,6 +83,13 @@ const MainLayout: React.FC = () => {
           <>
             <ClientScopeBar />
             <CardQualityReport />
+          </>
+        )}
+
+        {activeTab === 'movement' && (
+          <>
+            <ClientScopeBar />
+            <RateMovementReport />
           </>
         )}
 

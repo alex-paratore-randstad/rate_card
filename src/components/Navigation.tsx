@@ -12,6 +12,7 @@ import {
   TableProperties,
   Layers,
   ClipboardCheck,
+  TrendingUp,
   LucideIcon,
 } from 'lucide-react';
 import { useRateCard } from '../context/RateCardContext';
@@ -71,7 +72,10 @@ export const TAB_GROUPS: TabGroup[] = [
     id: 'reports',
     label: 'Reports',
     icon: ClipboardCheck,
-    members: [{ id: 'cardquality', label: 'Card Quality', icon: ShieldCheck }],
+    members: [
+      { id: 'cardquality', label: 'Card Quality', icon: ShieldCheck },
+      { id: 'movement', label: 'Rate Movement', icon: TrendingUp },
+    ],
   },
   {
     id: 'matching',

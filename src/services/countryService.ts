@@ -234,3 +234,38 @@ export const currencyForCountry = (rawCountry: string): string | null => {
   const code = normalizeCountry(rawCountry);
   return code ? COUNTRY_CURRENCY[code] ?? null : null;
 };
+
+// ---------------------------------------------------------------------------
+// Region
+//
+// The market groupings a rate card recommendation is reported in. Coarser than
+// the regional report's geography, which works inside a country from the
+// actuals; these group whole countries, so they need nothing but the card.
+// ---------------------------------------------------------------------------
+
+/** Display order, west to east, the way the recommendation deck reads. */
+export const REGIONS = ['N. America', 'LATAM', 'W. Europe', 'CEE', 'MEA', 'APAC'] as const;
+
+/** Where a country the table does not place is reported, rather than dropped. */
+export const OTHER_REGION = 'Other';
+
+const COUNTRY_REGION: Record<string, (typeof REGIONS)[number]> = {
+  US: 'N. America', CA: 'N. America', PR: 'N. America',
+  MX: 'LATAM', BR: 'LATAM', AR: 'LATAM', CL: 'LATAM', CO: 'LATAM', CR: 'LATAM',
+  GB: 'W. Europe', IE: 'W. Europe', DE: 'W. Europe', FR: 'W. Europe', NL: 'W. Europe',
+  BE: 'W. Europe', ES: 'W. Europe', IT: 'W. Europe', PT: 'W. Europe', SE: 'W. Europe',
+  NO: 'W. Europe', DK: 'W. Europe', FI: 'W. Europe', CH: 'W. Europe', AT: 'W. Europe',
+  PL: 'CEE', CZ: 'CEE', HU: 'CEE', RO: 'CEE',
+  IL: 'MEA', AE: 'MEA', TR: 'MEA', ZA: 'MEA',
+  IN: 'APAC', CN: 'APAC', HK: 'APAC', JP: 'APAC', KR: 'APAC', SG: 'APAC',
+  MY: 'APAC', PH: 'APAC', ID: 'APAC', AU: 'APAC', NZ: 'APAC',
+};
+
+/**
+ * The region a country value reports under. An unrecognised country goes to
+ * `OTHER_REGION` so its lines stay visible — the same rule as the country key.
+ */
+export const regionForCountry = (rawCountry: string): string => {
+  const code = normalizeCountry(rawCountry);
+  return (code && COUNTRY_REGION[code]) || OTHER_REGION;
+};

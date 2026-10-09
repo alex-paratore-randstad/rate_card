@@ -11,6 +11,7 @@ import {
   FileWarning,
   SlidersHorizontal,
   TableProperties,
+  TrendingUp,
 } from 'lucide-react';
 import * as ClientMatch from '../../services/clientMatchService';
 import * as TitleMatch from '../../services/titleMatchService';
@@ -566,6 +567,26 @@ ${pct(CardQuality.RATIO_TOLERANCE)} of the median ratio`}</Formula>
 min = max        no width; only one exact rate passes
 min or max ≤ 0   nothing to compare against
 max ÷ min > ${CardQuality.IMPLAUSIBLE_RATIO}   too wide to govern anything`}</Formula>
+      </Calc>
+    </Section>
+
+    <Section
+      icon={<TrendingUp size={20} color="var(--randstad-blue-primary)" />}
+      title="Rate movement"
+      subtitle="What moved between two rate years. On the Reports tab; no Domo data involved."
+    >
+      <Calc
+        name="Change in NTE"
+        answers="Where did the card maximum rise, and by how much?"
+      >
+        <Formula>{`line   = client + country + title + labor type
+change = max(to year) ÷ max(from year) − 1, per line in both years
+cell   = mean change of the lines in that row and region`}</Formula>
+        Compared line by line, then averaged, never averaged and then compared: a region that
+        added a senior title would otherwise show a rise nobody negotiated. Lines in only one
+        year are counted and left out. Every line counts once — the card has no volume, so the
+        figure is not spend-weighted. Rows are job families from the title mapping file, or
+        titles when the file carries no family; regions group whole countries.
       </Calc>
     </Section>
 
