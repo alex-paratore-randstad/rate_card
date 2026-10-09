@@ -351,58 +351,72 @@ auto-accept ≥ ${TitleMatch.AUTO_RESOLVE_SCORE} · propose ≥ ${TitleMatch.SUG
 
     <Section
       icon={<Tags size={20} color="var(--randstad-blue-primary)" />}
-      title="Title mappings"
-      subtitle="Uploaded as a file. Not the same thing as title matching, above."
+      title="Standard titles"
+      subtitle="Every card title matched to the uploaded standard list. Not the same thing as title matching, above."
     >
       <Calc
         name="What it is"
         answers="How does this differ from the title matcher?"
         instead={
           <>
-            storing both in one place would have forced a compromise. A match is a judgement about
-            two systems and is only safe per client; a taxonomy is a decision already taken
-            elsewhere and holds everywhere. Merging them would mean either scoping the taxonomy
-            per client for no reason, or widening a per-client match to every account.
+            storing both in one place would have forced a compromise. A match to Domo is a
+            judgement about two systems and is only safe per client; the standard list is a
+            taxonomy decided elsewhere and holds everywhere. Merging them would mean either scoping
+            the taxonomy per client for no reason, or widening a per-client match to every account.
           </>
         }
       >
-        <Formula>{`title matching   card title  →  Domo title_cleaned   per client, scored, confirmed
-title mapping    card title  →  standard title      global, uploaded, no scoring`}</Formula>
+        <Formula>{`title matching   card title  →  Domo title_cleaned   per client, confirmed before use
+standard titles  card title  →  standard title      global, applied at once, reviewed after`}</Formula>
         The two are stored separately and neither reads the other. Only the matcher feeds the
-        Supplemental Data reports.
+        Supplemental Data reports; the standard titles feed Rate Movement.
       </Calc>
 
-      <Calc name="The key" answers="How does a mapping find a card title?">
-        <Formula>{`key = normalise(title)   — the same normalisation the matcher uses`}</Formula>
-        So a mapping written for <code>Sr. Software Eng. II</code> finds a card row spelled{' '}
-        <em>Senior Software Engineer 2</em> without the file having to anticipate the spelling.
-        Building the key any other way would create a second, quietly different notion of what
-        makes two titles the same.
+      <Calc name="Seniority" answers="Why does Senior Software Engineer II match Software Engineer?">
+        <Formula>{`key   = normalise(title)          Sr. → senior, II → 2, punctuation dropped
+level = senior junior lead principal staff mid trainee 1–5 …   taken off, kept as the level
+noise = contract temp remote part time …                      taken off, discarded`}</Formula>
+        The list names roles, not grades, so a grade on the card title is set aside before
+        matching and shown beside the match instead.
       </Calc>
 
       <Calc
-        name="Loading a file"
-        answers="What happens to the mappings already stored?"
+        name="Scoring"
+        answers="How is the standard title chosen?"
         instead={
           <>
-            merging would keep retired mappings alive invisibly — a title the new file no longer
-            lists would go on being mapped by the old one, with no way to tell and nothing to
-            delete it.
+            plain string similarity, which rates <em>Data Analyst</em> close to{' '}
+            <em>Data Engineer</em> and <em>Warehouse Associate</em> close to{' '}
+            <em>Research Associate</em> — the same words, different jobs.
           </>
         }
       >
-        <Formula>{`a new file REPLACES the stored set entirely
+        <Formula>{`exact     same key after seniority and synonyms (developer = engineer, rep = representative …)
+otherwise 0.7 × word overlap (role noun counts double) + 0.3 × spelling similarity
+          × 0.75 if the card's role noun is not in the standard
+          × 0.75 if none of the card's other words are
 
-rows dropped   missing either title            counted, not stored blank
-duplicates     same uploaded title twice       first kept, rest counted`}</Formula>
+exact             applied
+≥ 80%, clear      applied, high confidence
+55–80%, or a near tie (< 5 points)  applied, flagged for review
+< 55%             not applied; best guesses offered`}</Formula>
       </Calc>
 
-      <Calc name="Coverage" answers="How much of the card does the file explain?">
-        <Formula>{`mapped / unmapped counted in RECORDS, not distinct titles
-unused mappings = file rows matching no ingested title`}</Formula>
-        Weighted by records because twenty unmapped titles carrying one row each matter less than
-        one carrying two hundred. The unused count runs the other way, and is how a taxonomy
-        built for a different account shows itself.
+      <Calc
+        name="Review"
+        answers="What does confirming a match store?"
+        instead={
+          <>
+            storing every automatic match would freeze it: a card uploaded next month, or a revised
+            list, would need the whole set re-run by hand.
+          </>
+        }
+      >
+        <Formula>{`stored     only reviewed decisions — a confirmed, changed, or "none fits" title
+recomputed every automatic match, whenever the cards or the list change
+new list   replaces the old one; reviewed decisions are kept`}</Formula>
+        Coverage is counted in records rather than distinct titles, because twenty unmapped
+        titles carrying one row each matter less than one carrying two hundred.
       </Calc>
     </Section>
 
@@ -585,8 +599,8 @@ cell   = mean change of the lines in that row and region`}</Formula>
         Compared line by line, then averaged, never averaged and then compared: a region that
         added a senior title would otherwise show a rise nobody negotiated. Lines in only one
         year are counted and left out. Every line counts once — the card has no volume, so the
-        figure is not spend-weighted. Rows are job families from the title mapping file, or
-        titles when the file carries no family; regions group whole countries.
+        figure is not spend-weighted. Rows are standard titles where a card title has one, and the
+        card title where it does not; regions group whole countries.
       </Calc>
     </Section>
 

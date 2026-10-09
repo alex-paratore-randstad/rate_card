@@ -81,7 +81,7 @@ export const TAB_GROUPS: TabGroup[] = [
     id: 'matching',
     label: 'Matching',
     icon: Link2,
-    members: [{ id: 'mappings', label: 'Title Mappings', icon: Tags }],
+    members: [{ id: 'mappings', label: 'Standard Titles', icon: Tags }],
   },
   // Everything from here needs the connected datasets. Grouped together so the
   // "load actuals" prompt is a property of one area rather than a surprise on

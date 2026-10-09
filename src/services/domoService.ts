@@ -4,6 +4,7 @@ import {
   ClientAlias,
   ClientDirectory,
   ClientDirectoryEntry,
+  StandardTitleList,
   TitleAlias,
   TitleMapping,
 } from '../types/rateCard';
@@ -18,8 +19,10 @@ const COLLECTION_DIRECTORY = 'rate_card_client_directory';
 const COLLECTION_ALIASES = 'rate_card_client_aliases';
 /** Confirmed card-title to actuals-title pairings; one document each. */
 const COLLECTION_TITLE_ALIASES = 'rate_card_title_aliases';
-/** Uploaded title-to-standard-title mappings; one document each. */
+/** Reviewed card-title to standard-title decisions; one document each. */
 const COLLECTION_TITLE_MAPPINGS = 'rate_card_title_mappings';
+/** The standard title list; one document holding the whole list. */
+const COLLECTION_STANDARD_TITLES = 'rate_card_standard_titles';
 const COLLECTIONS_BASE = '/domo/datastores/v1/collections';
 
 const LOCAL_RECORDS_KEY = 'randstad_rate_cards';
@@ -28,6 +31,7 @@ const LOCAL_DIRECTORY_KEY = 'randstad_client_directory';
 const LOCAL_ALIASES_KEY = 'randstad_client_aliases';
 const LOCAL_TITLE_ALIASES_KEY = 'randstad_title_aliases';
 const LOCAL_TITLE_MAPPINGS_KEY = 'randstad_title_mappings';
+const LOCAL_STANDARD_TITLES_KEY = 'randstad_standard_titles';
 
 /** How many collection writes to keep in flight at once. */
 const WRITE_CONCURRENCY = 25;
@@ -723,26 +727,84 @@ export const deleteTitleAlias = async (alias: TitleAlias): Promise<void> => {
 };
 
 // ---------------------------------------------------------------------------
-// Title mappings
+// Standard titles
 //
-// Stored wholesale rather than row by row, which is the one real difference
-// from the alias collections above.
-//
-// An alias is a decision made once, revised in place, so `saveTitleAlias` reads
-// the collection back before each write to avoid creating a second decision for
-// the same title. Mappings do not arrive that way: a file lands carrying the
-// whole taxonomy, and the new file supersedes the old one entirely. Reusing the
-// alias path would have meant one full collection read per row — several
-// hundred round trips to load one file — to enforce a uniqueness rule the
-// replace already guarantees.
+// One document holding the whole list, like the client directory: the list
+// arrives and is replaced as a unit, and one write is one write rather than
+// four hundred.
 // ---------------------------------------------------------------------------
 
+const isUsableStandardList = (list: any): list is StandardTitleList =>
+  !!list && Array.isArray(list.titles) && list.titles.length > 0;
+
+export const fetchStandardTitles = async (): Promise<StandardTitleList | null> => {
+  if ((await probeDomoAccess()) !== 'none') {
+    const docs = await domoGet(`${COLLECTIONS_BASE}/${COLLECTION_STANDARD_TITLES}/documents/`);
+    const usable = unwrapWithIds<StandardTitleList>(docs)
+      .filter((d) => isUsableStandardList(d.content))
+      .sort((a, b) => (b.content.uploadedAt || '').localeCompare(a.content.uploadedAt || ''));
+    return usable.length ? usable[0].content : null;
+  }
+
+  const localData = localStorage.getItem(LOCAL_STANDARD_TITLES_KEY);
+  if (localData) {
+    try {
+      const parsed = JSON.parse(localData);
+      if (isUsableStandardList(parsed)) return parsed;
+    } catch {
+      // ignore parse errors
+    }
+  }
+  return null;
+};
+
+/** Replace the stored list. Passing null removes it. */
+export const saveStandardTitles = async (list: StandardTitleList | null): Promise<void> => {
+  if ((await probeDomoAccess()) !== 'none') {
+    const docs = await domoGet(`${COLLECTIONS_BASE}/${COLLECTION_STANDARD_TITLES}/documents/`);
+    const existing = unwrapWithIds<StandardTitleList>(docs);
+    const url = (id: string) => `${COLLECTIONS_BASE}/${COLLECTION_STANDARD_TITLES}/documents/${id}`;
+
+    if (list && existing.length) {
+      await domoPut(url(existing[0].id), { content: list });
+    } else if (list) {
+      await domoPost(`${COLLECTIONS_BASE}/${COLLECTION_STANDARD_TITLES}/documents/`, {
+        content: list,
+      });
+    }
+    // Every other copy would shadow or resurrect the list on the next read.
+    for (const stale of list ? existing.slice(1) : existing) {
+      try {
+        await domoDelete(url(stale.id));
+      } catch (error) {
+        console.warn('[Domo Collections] Could not remove a stale standard title list:', error);
+      }
+    }
+    return;
+  }
+
+  if (list) localStorage.setItem(LOCAL_STANDARD_TITLES_KEY, JSON.stringify(list));
+  else localStorage.removeItem(LOCAL_STANDARD_TITLES_KEY);
+};
+
+// ---------------------------------------------------------------------------
+// Title mappings
+//
+// Reviewed decisions only, one document per card title. The matcher's own
+// proposals are recomputed from the standard list and never stored, so this
+// collection holds exactly what a person has looked at.
+// ---------------------------------------------------------------------------
+
+/**
+ * A stored decision needs a key; an empty standard title is allowed only on a
+ * reviewed decision, where it records that no standard fits.
+ */
 const isUsableTitleMapping = (mapping: any): boolean =>
   !!mapping &&
   typeof mapping.uploadedTitleKey === 'string' &&
   mapping.uploadedTitleKey !== '' &&
   typeof mapping.standardTitle === 'string' &&
-  mapping.standardTitle !== '';
+  (mapping.standardTitle !== '' || mapping.method === 'reviewed');
 
 export const fetchTitleMappings = async (): Promise<TitleMapping[]> => {
   if ((await probeDomoAccess()) !== 'none') {
@@ -769,29 +831,26 @@ export const fetchTitleMappings = async (): Promise<TitleMapping[]> => {
 };
 
 /**
- * Replace the stored mapping set with the contents of a newly uploaded file.
+ * Store reviewed decisions, replacing any earlier decision for the same title.
  *
- * The old documents go first and the new ones follow. The reverse order would
- * survive a failed write with the previous mappings intact, but it would also
- * leave two mappings for the same title if the write only partly succeeded —
- * and a taxonomy that silently disagrees with itself is worse than one that is
- * briefly empty. The file is on disk and can be uploaded again; a duplicate key
- * would quietly change what every report groups by.
+ * The collection is read once for the whole batch rather than once per row as
+ * `saveTitleAlias` does: confirming every high-confidence match is one click
+ * over a few hundred titles, and a read per row would make it a long wait.
  */
-export const replaceTitleMappings = async (
+export const saveTitleMappings = async (
   mappings: TitleMapping[]
 ): Promise<{ saved: TitleMapping[]; failed: number; firstError?: string }> => {
-  if ((await probeDomoAccess()) === 'none') {
-    const stored = mappings.map((m, i) => ({ ...m, id: m.id || `local-mapping-${i}` }));
-    localStorage.setItem(LOCAL_TITLE_MAPPINGS_KEY, JSON.stringify(stored));
-    return { saved: stored, failed: 0 };
-  }
-
   const existing = await fetchTitleMappings();
-  if (existing.length) {
-    await writeInChunks(existing, (m) =>
-      domoDelete(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_MAPPINGS}/documents/${m.id}`)
+  const idByKey = new Map(existing.map((m) => [m.uploadedTitleKey, m.id]));
+
+  if ((await probeDomoAccess()) === 'none') {
+    const saved = mappings.map((m) => ({ ...m, id: idByKey.get(m.uploadedTitleKey) || `local-${m.uploadedTitleKey}` }));
+    const keys = new Set(saved.map((m) => m.uploadedTitleKey));
+    localStorage.setItem(
+      LOCAL_TITLE_MAPPINGS_KEY,
+      JSON.stringify([...saved, ...existing.filter((m) => !keys.has(m.uploadedTitleKey))])
     );
+    return { saved, failed: 0 };
   }
 
   const saved: TitleMapping[] = [];
@@ -802,7 +861,14 @@ export const replaceTitleMappings = async (
     const slice = mappings.slice(i, i + WRITE_CONCURRENCY);
     const results = await Promise.allSettled(
       slice.map(async (mapping) => {
-        const { id, ...content } = mapping;
+        const { id: _ignored, ...content } = mapping;
+        const id = idByKey.get(mapping.uploadedTitleKey);
+        if (id) {
+          await domoPut(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_MAPPINGS}/documents/${id}`, {
+            content,
+          });
+          return { ...mapping, id };
+        }
         const created = await domoPost(
           `${COLLECTIONS_BASE}/${COLLECTION_TITLE_MAPPINGS}/documents/`,
           { content }
@@ -825,7 +891,21 @@ export const replaceTitleMappings = async (
   return { saved, failed, firstError };
 };
 
-/** Remove every stored mapping. */
+/** Undo a decision, so the title goes back to the matcher's proposal. */
+export const deleteTitleMapping = async (mapping: TitleMapping): Promise<void> => {
+  if ((await probeDomoAccess()) !== 'none') {
+    if (!mapping.id) return;
+    await domoDelete(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_MAPPINGS}/documents/${mapping.id}`);
+    return;
+  }
+  const stored = await fetchTitleMappings();
+  localStorage.setItem(
+    LOCAL_TITLE_MAPPINGS_KEY,
+    JSON.stringify(stored.filter((m) => m.uploadedTitleKey !== mapping.uploadedTitleKey))
+  );
+};
+
+/** Remove every stored decision. */
 export const clearTitleMappings = async (): Promise<void> => {
   if ((await probeDomoAccess()) === 'none') {
     localStorage.removeItem(LOCAL_TITLE_MAPPINGS_KEY);

@@ -1,170 +1,49 @@
 import * as XLSX from 'xlsx';
 import {
-  MappingColumn,
-  MappingCoverage,
-  MappingTargetField,
   RateCardRecord,
+  StandardTitleCandidate,
+  StandardTitleList,
   TitleMapping,
-  TitleMappingPreview,
+  TitleMatchConfidence,
+  StandardTitleResolution,
 } from '../types/rateCard';
 import { normalizeJobTitle } from './titleService';
+import { diceCoefficient } from './stringSimilarity';
 
 /**
- * Reading the uploaded title mapping file.
+ * Matching uploaded card titles onto the standard title list.
  *
- * The file answers one question — what is this uploaded job title really
- * called? — and the app has an answer for it already in `normalizeJobTitle`.
- * Every key built here goes through that same function, so a mapping keyed on
- * "Sr. Software Eng. II" finds a card row spelled "Senior Software Engineer 2"
- * without the file having to anticipate the spelling. Building keys any other
- * way would create a second, quietly different notion of title identity.
+ * The list is the taxonomy: one column of titles, with no say about which card
+ * spellings belong to each. So every card title is matched automatically, the
+ * match applies straight away, and a reviewer confirms or corrects it. Only
+ * the reviewed decisions are stored — a proposal is recomputed from the list
+ * whenever the cards or the list change, so a newly uploaded card is matched
+ * the moment it lands rather than waiting for someone to re-run anything.
+ *
+ * Every key goes through `normalizeJobTitle`, the app's one notion of title
+ * identity, so "Sr. Software Eng. II" and "Senior Software Engineer 2" are the
+ * same card title before matching even starts.
  */
+
+// ---------------------------------------------------------------------------
+// Reading the list
+// ---------------------------------------------------------------------------
+
+/** Header cells that mean "this column is the list", not a title in it. */
+const HEADER_WORDS = /\b(job )?titles?\b|\bstandard\b|\bposition\b|\brole\b/;
 
 /**
- * Header text that identifies each column.
+ * Read an uploaded standard title list.
  *
- * The uploaded-title aliases are deliberately the narrower list. "Title" alone
- * is ambiguous in a two-title file, so it resolves to the uploaded side only
- * when nothing claims that side more strongly — which is handled by scoring
- * below rather than by the alias list.
- */
-const MAPPING_ALIASES: Record<Exclude<MappingTargetField, 'ignore'>, string[]> = {
-  uploadedTitle: [
-    'uploaded title',
-    'card title',
-    'source title',
-    'original title',
-    'raw title',
-    'client title',
-    'job title',
-    'job titles',
-    'title',
-    'from',
-  ],
-  standardTitle: [
-    'standard title',
-    'standardised title',
-    'standardized title',
-    'canonical title',
-    'mapped title',
-    'normalized title',
-    'normalised title',
-    'target title',
-    'standard job title',
-    'standard',
-    'mapping',
-    'maps to',
-    'to',
-  ],
-  family: ['family', 'job family', 'category', 'job category', 'function', 'discipline', 'group'],
-  level: ['level', 'job level', 'seniority', 'grade', 'band', 'tier', 'rank'],
-};
-
-const clean = (header: string): string =>
-  header.toLowerCase().replace(/[-–—_()]/g, ' ').replace(/\s+/g, ' ').trim();
-
-/** Score one header against one field. 1 is an exact alias, 0 is no signal. */
-const scoreHeader = (header: string, field: Exclude<MappingTargetField, 'ignore'>): number => {
-  const core = clean(header);
-  if (!core) return 0;
-  let best = 0;
-  for (const alias of MAPPING_ALIASES[field]) {
-    if (core === alias) return 1;
-    // A containment hit is weaker, and weaker still for a short alias like
-    // "to", which turns up inside unrelated words.
-    if (core.includes(alias)) best = Math.max(best, alias.length >= 5 ? 0.8 : 0.5);
-  }
-  return best;
-};
-
-/**
- * Assign headers to fields, best claim first.
+ * The file is expected to be one column of titles, with or without a header —
+ * the one this was built against has none, and treating its first row as a
+ * header would have silently dropped "Account Analyst". A first cell is taken
+ * as a header only when it reads like one ("Job Title", "Standard Titles").
  *
- * Scored globally rather than header by header because the two title columns
- * compete for the same words: a file headed "Job Title" and "Standard Title"
- * has both columns matching a `uploadedTitle` alias, and taking each header in
- * isolation would map both to the uploaded side and leave the mapping with no
- * target. Resolving the strongest claim first, then removing that field and
- * that header from contention, gets this file right.
+ * Duplicates are dropped and reported rather than kept, since two spellings of
+ * one standard would split a role across two rows of every report.
  */
-export const detectMappingColumns = (
-  headers: string[],
-  rows: Record<string, any>[]
-): MappingColumn[] => {
-  const fields: Exclude<MappingTargetField, 'ignore'>[] = [
-    'uploadedTitle',
-    'standardTitle',
-    'family',
-    'level',
-  ];
-
-  const claims: { header: string; field: MappingTargetField; score: number }[] = [];
-  for (const header of headers) {
-    for (const field of fields) {
-      const score = scoreHeader(header, field);
-      if (score > 0) claims.push({ header, field, score });
-    }
-  }
-  claims.sort((a, b) => b.score - a.score);
-
-  const assigned = new Map<string, { field: MappingTargetField; score: number }>();
-  const taken = new Set<MappingTargetField>();
-  for (const claim of claims) {
-    if (assigned.has(claim.header) || taken.has(claim.field)) continue;
-    assigned.set(claim.header, { field: claim.field, score: claim.score });
-    taken.add(claim.field);
-  }
-
-  // A two-column file with no recognisable headers is still obviously a
-  // mapping: first column from, second column to. Only applied when nothing
-  // was detected at all, so it never overrides a real header.
-  if (assigned.size === 0 && headers.length >= 2) {
-    assigned.set(headers[0], { field: 'uploadedTitle', score: 0.3 });
-    assigned.set(headers[1], { field: 'standardTitle', score: 0.3 });
-  }
-
-  return headers.map((header) => ({
-    rawHeader: header,
-    targetField: assigned.get(header)?.field ?? 'ignore',
-    confidence: assigned.get(header)?.score ?? 0,
-    sampleValues: rows
-      .slice(0, 5)
-      .map((r) => String(r[header] ?? '').trim())
-      .filter(Boolean)
-      .slice(0, 3),
-  }));
-};
-
-/** Turn a sheet matrix into headers plus row objects, skipping blank leads. */
-const layout = (matrix: any[][]): { headers: string[]; rows: Record<string, any>[] } => {
-  const firstFilled = matrix.findIndex((row) =>
-    row.some((cell) => String(cell ?? '').trim() !== '')
-  );
-  if (firstFilled === -1) return { headers: [], rows: [] };
-
-  const headers = matrix[firstFilled].map((h, i) => String(h ?? '').trim() || `Column ${i + 1}`);
-  const rows = matrix
-    .slice(firstFilled + 1)
-    .filter((row) => row.some((cell) => String(cell ?? '').trim() !== ''))
-    .map((row) => {
-      const obj: Record<string, any> = {};
-      headers.forEach((h, i) => {
-        obj[h] = row[i] ?? '';
-      });
-      return obj;
-    });
-  return { headers, rows };
-};
-
-/**
- * Read an uploaded mapping file.
- *
- * The tab with the most rows wins, and the others are named in the preview.
- * A mapping file is usually a single sheet, but a workbook carrying a "Notes"
- * or "Instructions" tab is common enough that silently reading sheet one would
- * sometimes read the wrong thing without saying so.
- */
-export const readTitleMappingFile = (file: File): Promise<TitleMappingPreview> =>
+export const readStandardTitleFile = (file: File): Promise<StandardTitleList & { duplicates: string[] }> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -173,27 +52,55 @@ export const readTitleMappingFile = (file: File): Promise<TitleMappingPreview> =
           type: 'array',
         });
 
-        const sheets = workbook.SheetNames.map((name) => {
+        // The tab with the most filled cells in its first used column wins.
+        let best: string[] = [];
+        let bestSheet = '';
+        for (const name of workbook.SheetNames) {
           const matrix = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[name], {
             header: 1,
             defval: '',
-          });
-          return { name, ...layout(matrix as any[][]) };
-        }).filter((s) => s.rows.length > 0 && s.headers.length > 0);
+          }) as any[][];
+          const width = Math.max(0, ...matrix.map((r) => r.length));
+          for (let col = 0; col < width; col += 1) {
+            const values = matrix.map((r) => String(r[col] ?? '').trim()).filter(Boolean);
+            if (values.length > best.length) {
+              best = values;
+              bestSheet = name;
+            }
+          }
+        }
 
-        if (!sheets.length) {
-          reject(new Error('No readable rows were found in that file.'));
+        if (!best.length) {
+          reject(new Error('No titles were found in that file.'));
           return;
         }
 
-        const chosen = sheets.reduce((a, b) => (b.rows.length > a.rows.length ? b : a));
+        const first = best[0].toLowerCase();
+        const values =
+          HEADER_WORDS.test(first) && !standardKeyCollides(first, best.slice(1))
+            ? best.slice(1)
+            : best;
+
+        const seen = new Set<string>();
+        const titles: string[] = [];
+        const duplicates: string[] = [];
+        for (const title of values) {
+          const key = normalizeJobTitle(title);
+          if (!key) continue;
+          if (seen.has(key)) {
+            duplicates.push(title);
+            continue;
+          }
+          seen.add(key);
+          titles.push(title);
+        }
+
         resolve({
-          fileName: file.name,
-          sheetName: chosen.name,
-          otherSheets: sheets.filter((s) => s.name !== chosen.name).map((s) => s.name),
-          headers: chosen.headers,
-          rows: chosen.rows,
-          columns: detectMappingColumns(chosen.headers, chosen.rows),
+          titles,
+          sourceFileName:
+            workbook.SheetNames.length > 1 ? `${file.name} · ${bestSheet}` : file.name,
+          uploadedAt: '',
+          duplicates,
         });
       } catch (err) {
         reject(err);
@@ -203,95 +110,281 @@ export const readTitleMappingFile = (file: File): Promise<TitleMappingPreview> =
     reader.readAsArrayBuffer(file);
   });
 
+/** Whether a would-be header is itself a title the rest of the list uses. */
+const standardKeyCollides = (cell: string, rest: string[]): boolean => {
+  const key = normalizeJobTitle(cell);
+  return rest.some((t) => normalizeJobTitle(t) === key);
+};
+
+// ---------------------------------------------------------------------------
+// Comparable forms
+// ---------------------------------------------------------------------------
+
 /**
- * Build the mappings a confirmed preview describes.
- *
- * Rows missing either title are dropped and counted rather than stored blank —
- * a mapping with no target silently removes a title from the taxonomy, which
- * looks identical to never having mapped it. Duplicate uploaded titles keep the
- * first and are counted too, since a title cannot have two standard forms and
- * picking the last would depend on row order.
+ * Words that say how senior a role is, or how it is engaged, rather than what
+ * it is. The standard list carries none of them — it has "Software Engineer",
+ * not "Senior Software Engineer II" — so they are taken off the card title
+ * before matching and kept as the level. Digits are here because
+ * `normalizeJobTitle` has already turned "II" into "2".
  */
-export const buildTitleMappings = (
-  preview: TitleMappingPreview,
-  columns: MappingColumn[],
-  uploadedAt: string
-): { mappings: TitleMapping[]; skipped: number; duplicates: string[] } => {
-  const columnFor = (field: MappingTargetField): string | undefined =>
-    columns.find((c) => c.targetField === field)?.rawHeader;
+const LEVEL_WORDS = new Set([
+  'senior',
+  'junior',
+  'lead',
+  'principal',
+  'staff',
+  'level',
+  'mid',
+  'intermediate',
+  'experienced',
+  'trainee',
+  'apprentice',
+  'journeyman',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+]);
 
-  const uploadedCol = columnFor('uploadedTitle');
-  const standardCol = columnFor('standardTitle');
-  const familyCol = columnFor('family');
-  const levelCol = columnFor('level');
+const NOISE_WORDS = new Set([
+  'contract',
+  'contractor',
+  'temp',
+  'temporary',
+  'remote',
+  'hybrid',
+  'onsite',
+  'part',
+  'full',
+  'time',
+  'the',
+  'to',
+  'for',
+  'at',
+  'in',
+  'of',
+  'and',
+]);
 
-  if (!uploadedCol || !standardCol) {
-    return { mappings: [], skipped: preview.rows.length, duplicates: [] };
+/**
+ * Spellings of one role that `normalizeJobTitle` deliberately leaves apart.
+ *
+ * That function absorbs formatting only; deciding that a developer and an
+ * engineer are the same job is a judgement, and here it is the right one —
+ * the list says "Software Engineer" and means everyone who writes software.
+ * Applied to both sides, so a list that does name a developer still finds it.
+ */
+const PHRASE_EQUIVALENTS: [RegExp, string][] = [
+  // Multi-word expansions from normalizeJobTitle collapse back to one token
+  // here, or "IT Manager" outscores "Project Manager" for "IT Project
+  // Manager" on the strength of two words that are really one.
+  [/\binformation technology\b/g, 'it'],
+  [/\bhuman resources\b/g, 'hr'],
+  [/\bquality assurance\b/g, 'qa'],
+  [/\bquality control\b/g, 'qc'],
+  [/\bquality\b/g, 'qa'],
+  [/\ba p\b/g, 'accounts payable'],
+  [/\ba r\b/g, 'accounts receivable'],
+  [/\bclerk\b/g, 'associate'],
+  [/\blab\b/g, 'laboratory'],
+  [/\bcopy writer\b/g, 'copywriter'],
+  [/\bsecurity officer\b/g, 'security guard'],
+  [/\bexecutive administrator\b/g, 'executive assistant'],
+  [/\b(help|service) desk\b/g, 'it support'],
+  [/\bdesktop support\b/g, 'it support'],
+  [/\bfront end\b/g, 'frontend'],
+  [/\bback end\b/g, 'backend'],
+  [/\bfullstack\b/g, 'full stack'],
+  [/\bdeveloper\b/g, 'engineer'],
+  [/\bprogrammer\b/g, 'engineer'],
+  [/\bbi\b/g, 'business intelligence'],
+  [/\bml\b/g, 'machine learning'],
+  [/\bsre\b/g, 'site reliability engineer'],
+  [/\bdba\b/g, 'database administrator'],
+  [/\bcsr\b/g, 'customer service representative'],
+  [/\brep\b/g, 'representative'],
+  [/\bap\b/g, 'accounts payable'],
+  [/\bar\b/g, 'accounts receivable'],
+  [/\bhse\b/g, 'ehs'],
+  [/\bcyber ?security\b/g, 'cyber security'],
+  [/\binfosec\b/g, 'cyber security'],
+  [/\bux ui\b/g, 'ui ux'],
+  [/\bux\b(?! )/g, 'ui ux'],
+];
+
+/** Card title split into what the role is and how senior it is. */
+const splitLevel = (key: string): { core: string; level: string[] } => {
+  // "Entry level" is a level; "entry" alone is the job in "Data Entry Clerk".
+  const words = key.replace(/\bentry level\b/g, 'level').split(' ');
+  const core = words.filter((w) => !LEVEL_WORDS.has(w) && !NOISE_WORDS.has(w));
+  const level = words.filter((w) => LEVEL_WORDS.has(w));
+  // A title that is nothing but level words ("Lead") keeps them as its role.
+  return core.length ? { core: core.join(' '), level } : { core: key, level: [] };
+};
+
+const canonical = (core: string): string => {
+  let out = ` ${core} `;
+  for (const [pattern, replacement] of PHRASE_EQUIVALENTS) out = out.replace(pattern, replacement);
+  return out.replace(/\s+/g, ' ').trim();
+};
+
+const SUFFIXES = ['ation', 'ative', 'ement', 'ment', 'ator', 'ing', 'ant', 'ive', 'ion', 'er', 'or', 'al', 'e', 's'];
+
+/**
+ * A crude stem, used only for scoring. Enough to put "administrative",
+ * "administrator" and "administration" together, and "accounting" with
+ * "accountant" — the variance a title list sees most — without a dictionary.
+ */
+const stem = (word: string): string => {
+  let w = word;
+  for (let pass = 0; pass < 3; pass += 1) {
+    const suffix = SUFFIXES.find((s) => w.endsWith(s) && w.length - s.length >= 4);
+    if (!suffix) break;
+    w = w.slice(0, -suffix.length);
+  }
+  return w;
+};
+
+interface Prepared {
+  title: string;
+  key: string;
+  canon: string;
+  stems: string[];
+  /** The role noun — "analyst" in "Data Analyst" — which matters most. */
+  head: string;
+}
+
+/**
+ * `heads` is the set of role nouns the standard list uses. A card title's head
+ * is its last word that is one of them, so "Electrical Engineer - Controls"
+ * is an engineer, not a control.
+ */
+const prepare = (title: string, heads?: Set<string>): Prepared => {
+  const key = normalizeJobTitle(title);
+  const canon = canonical(key);
+  const stems = canon.split(' ').filter((w) => w && !NOISE_WORDS.has(w)).map(stem);
+  const head =
+    (heads && [...stems].reverse().find((s) => heads.has(s))) ?? stems[stems.length - 1] ?? '';
+  return { title, key, canon, stems, head };
+};
+
+/**
+ * How well a card title describes a standard one, 0 to 1.
+ *
+ * Token overlap does most of the work, weighted so the standard's role noun
+ * counts double: "Data Analyst" against "Data Engineer" shares a word but not
+ * the job, and should score well under "Business Analyst". Character
+ * similarity is blended in for typos and run-together words.
+ *
+ * Two markdowns guard the errors most worth avoiding. A card whose role noun
+ * appears nowhere in the standard is not that job — "Payroll Clerk" is not a
+ * "Payroll Manager" on the strength of "payroll". And a card whose every
+ * qualifying word is missing from the standard is not that job either —
+ * "Warehouse Associate" shares only "associate" with "Research Associate".
+ */
+const scoreAgainst = (card: Prepared, std: Prepared): number => {
+  if (card.canon === std.canon) return 1;
+
+  const cardStems = new Set(card.stems);
+  const stdWeight = std.stems.reduce((n, s) => n + (s === std.head ? 2 : 1), 0);
+  const matchedWeight = std.stems.reduce(
+    (n, s) => n + (cardStems.has(s) ? (s === std.head ? 2 : 1) : 0),
+    0
+  );
+  const recall = stdWeight ? matchedWeight / stdWeight : 0;
+  const stdStems = new Set(std.stems);
+  const precision = card.stems.length
+    ? card.stems.filter((s) => stdStems.has(s)).length / card.stems.length
+    : 0;
+  const overlap = recall + precision ? (2 * recall * precision) / (recall + precision) : 0;
+
+  let score = 0.7 * overlap + 0.3 * diceCoefficient(card.canon, std.canon);
+  if (!stdStems.has(card.head)) score *= 0.75;
+  const qualifiers = card.stems.filter((s) => s !== card.head);
+  if (qualifiers.length && !qualifiers.some((s) => stdStems.has(s))) score *= 0.75;
+  return Math.min(score, 0.99);
+};
+
+// ---------------------------------------------------------------------------
+// Matching
+// ---------------------------------------------------------------------------
+
+/** Below this a proposal is not applied, only offered. */
+export const MIN_APPLIED_SCORE = 0.55;
+
+const confidenceOf = (top: StandardTitleCandidate | undefined, runnerUp?: StandardTitleCandidate): TitleMatchConfidence => {
+  if (!top) return 'none';
+  if (top.score >= 1) return 'exact';
+  if (top.score < MIN_APPLIED_SCORE) return 'none';
+  // Two standards nearly tied is a guess however high both score.
+  const contested = !!runnerUp && top.score - runnerUp.score < 0.05;
+  if (top.score >= 0.8 && !contested) return 'high';
+  if (top.score >= 0.65) return 'medium';
+  return 'low';
+};
+
+/**
+ * A matcher bound to one standard list.
+ *
+ * The list is prepared once and indexed by stem, so each card title is scored
+ * only against standards sharing at least one word with it. Without the index
+ * a few thousand card titles against 450 standards is a noticeable pause on
+ * every render that touches the cards.
+ */
+export const createTitleMatcher = (standardTitles: string[]) => {
+  const prepared = standardTitles.map((t) => prepare(t));
+  const heads = new Set(prepared.map((p) => p.head));
+  const byCanon = new Map<string, Prepared>();
+  const byStem = new Map<string, Prepared[]>();
+  for (const std of prepared) {
+    if (!byCanon.has(std.canon)) byCanon.set(std.canon, std);
+    for (const s of new Set(std.stems)) {
+      const list = byStem.get(s) ?? [];
+      list.push(std);
+      byStem.set(s, list);
+    }
   }
 
-  const mappings: TitleMapping[] = [];
-  const seen = new Set<string>();
-  const duplicates: string[] = [];
-  let skipped = 0;
+  return (uploadedTitle: string): { candidates: StandardTitleCandidate[]; level: string[] } => {
+    const { core, level } = splitLevel(normalizeJobTitle(uploadedTitle));
+    const card = prepare(core, heads);
 
-  preview.rows.forEach((row, index) => {
-    const uploadedTitle = String(row[uploadedCol] ?? '').trim();
-    const standardTitle = String(row[standardCol] ?? '').trim();
-    const uploadedTitleKey = normalizeJobTitle(uploadedTitle);
+    const exact = byCanon.get(card.canon);
+    if (exact) return { candidates: [{ standardTitle: exact.title, score: 1 }], level };
 
-    if (!uploadedTitle || !standardTitle || !uploadedTitleKey) {
-      skipped += 1;
-      return;
-    }
-    if (seen.has(uploadedTitleKey)) {
-      duplicates.push(uploadedTitle);
-      return;
-    }
-    seen.add(uploadedTitleKey);
+    const pool = new Set<Prepared>();
+    for (const s of card.stems) for (const std of byStem.get(s) ?? []) pool.add(std);
 
-    mappings.push({
-      id: `mapping-${index}`,
-      uploadedTitle,
-      uploadedTitleKey,
-      standardTitle,
-      standardTitleKey: normalizeJobTitle(standardTitle),
-      family: familyCol ? String(row[familyCol] ?? '').trim() || undefined : undefined,
-      level: levelCol ? String(row[levelCol] ?? '').trim() || undefined : undefined,
-      sourceFileName: preview.fileName,
-      uploadedAt,
-    });
-  });
-
-  return { mappings, skipped, duplicates };
+    const candidates = Array.from(pool, (std) => ({
+      standardTitle: std.title,
+      score: scoreAgainst(card, std),
+    }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+    return { candidates, level };
+  };
 };
 
-/** The standard title for an uploaded one, or null when it is unmapped. */
-export const standardTitleFor = (
-  uploadedTitle: string,
-  mappings: TitleMapping[]
-): TitleMapping | null => {
-  const key = normalizeJobTitle(uploadedTitle);
-  if (!key) return null;
-  return mappings.find((m) => m.uploadedTitleKey === key) ?? null;
-};
+const titleCase = (word: string): string =>
+  /^\d$/.test(word) ? word : word.charAt(0).toUpperCase() + word.slice(1);
 
 /**
- * How far the mapping file covers the titles actually ingested.
+ * Every distinct card title, matched and joined to any reviewed decision.
  *
- * Counted in records rather than distinct titles so the gap is weighted by how
- * much of the card it leaves out: twenty unmapped titles carrying one row each
- * matter less than one carrying two hundred. `unusedMappings` is the other
- * direction — rows in the file matching nothing we hold, which is how a
- * taxonomy built for a different account shows up.
+ * Counted in records so the review list can lead with the titles that carry
+ * the most of the card. A decision stored for a title no card holds any more
+ * is not returned here; it stays stored, and applies again if the title
+ * comes back.
  */
-export const mappingCoverage = (
+export const resolveTitles = (
   cards: RateCardRecord[],
-  mappings: TitleMapping[]
-): MappingCoverage => {
+  standardTitles: string[],
+  decisions: TitleMapping[]
+): StandardTitleResolution[] => {
   const counts = new Map<string, { title: string; count: number }>();
   for (const card of cards) {
     const title = (card.jobTitle || '').trim();
-    if (!title) continue;
     const key = normalizeJobTitle(title);
     if (!key) continue;
     const entry = counts.get(key) ?? { title, count: 0 };
@@ -299,32 +392,93 @@ export const mappingCoverage = (
     counts.set(key, entry);
   }
 
-  const byKey = new Map(mappings.map((m) => [m.uploadedTitleKey, m]));
-  const mapped: MappingCoverage['mapped'] = [];
-  const unmapped: MappingCoverage['unmapped'] = [];
-  const usedKeys = new Set<string>();
+  const match = standardTitles.length ? createTitleMatcher(standardTitles) : null;
+  const decided = new Map(decisions.map((d) => [d.uploadedTitleKey, d]));
 
+  const out: StandardTitleResolution[] = [];
   for (const [key, { title, count }] of counts) {
-    const mapping = byKey.get(key);
-    if (mapping) {
-      usedKeys.add(key);
-      mapped.push({
-        uploadedTitle: title,
-        standardTitle: mapping.standardTitle,
-        recordCount: count,
-      });
+    const { candidates, level } = match ? match(title) : { candidates: [], level: [] };
+    const confidence = confidenceOf(candidates[0], candidates[1]);
+    const proposed = confidence === 'none' ? null : candidates[0];
+    const decision = decided.get(key);
+
+    let status: StandardTitleResolution['status'];
+    let standardTitle: string | null;
+    if (decision) {
+      status = decision.standardTitle ? 'confirmed' : 'rejected';
+      standardTitle = decision.standardTitle || null;
+    } else if (proposed) {
+      status = 'auto';
+      standardTitle = proposed.standardTitle;
     } else {
-      unmapped.push({ uploadedTitle: title, recordCount: count });
+      status = 'unmatched';
+      standardTitle = null;
     }
+
+    out.push({
+      uploadedTitle: title,
+      uploadedTitleKey: key,
+      recordCount: count,
+      level: level.length ? level.map(titleCase).join(' ') : undefined,
+      candidates,
+      proposed,
+      confidence,
+      decision,
+      standardTitle,
+      status,
+    });
   }
 
-  // Heaviest first — the order the gaps are worth closing in.
-  mapped.sort((a, b) => b.recordCount - a.recordCount);
-  unmapped.sort((a, b) => b.recordCount - a.recordCount);
-
-  return {
-    mapped,
-    unmapped,
-    unusedMappings: mappings.filter((m) => !usedKeys.has(m.uploadedTitleKey)).length,
-  };
+  return out.sort((a, b) => b.recordCount - a.recordCount);
 };
+
+/** Whether a resolution still wants a person to look at it. */
+export const needsReview = (r: StandardTitleResolution): boolean =>
+  r.status === 'unmatched' ||
+  (r.status === 'auto' && (r.confidence === 'medium' || r.confidence === 'low'));
+
+/**
+ * The mappings reports group by: reviewed decisions first, then the matcher's
+ * proposals for every title nobody has reviewed. Decisions for titles no card
+ * currently holds are included too — they cost nothing and keep a report
+ * built on an older card consistent.
+ */
+export const effectiveMappings = (
+  resolutions: StandardTitleResolution[],
+  decisions: TitleMapping[]
+): TitleMapping[] => {
+  const out = new Map<string, TitleMapping>();
+  for (const d of decisions) if (d.standardTitle) out.set(d.uploadedTitleKey, d);
+  for (const r of resolutions) {
+    if (r.status !== 'auto' || !r.proposed || out.has(r.uploadedTitleKey)) continue;
+    out.set(r.uploadedTitleKey, {
+      id: `auto-${r.uploadedTitleKey}`,
+      uploadedTitle: r.uploadedTitle,
+      uploadedTitleKey: r.uploadedTitleKey,
+      standardTitle: r.proposed.standardTitle,
+      standardTitleKey: normalizeJobTitle(r.proposed.standardTitle),
+      level: r.level,
+      method: 'auto',
+      score: r.proposed.score,
+      uploadedAt: '',
+    });
+  }
+  return Array.from(out.values());
+};
+
+/** A reviewed decision for one card title. An empty standard means "none fits". */
+export const buildDecision = (
+  resolution: StandardTitleResolution,
+  standardTitle: string,
+  decidedAt: string
+): TitleMapping => ({
+  id: resolution.decision?.id ?? '',
+  uploadedTitle: resolution.uploadedTitle,
+  uploadedTitleKey: resolution.uploadedTitleKey,
+  standardTitle,
+  standardTitleKey: normalizeJobTitle(standardTitle),
+  level: resolution.level,
+  method: 'reviewed',
+  score: resolution.candidates.find((c) => c.standardTitle === standardTitle)?.score,
+  uploadedAt: decidedAt,
+});

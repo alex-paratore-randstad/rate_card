@@ -371,6 +371,14 @@
             "type": "STRING"
           },
           {
+            "name": "method",
+            "type": "STRING"
+          },
+          {
+            "name": "score",
+            "type": "DOUBLE"
+          },
+          {
             "name": "sourceFileName",
             "type": "STRING"
           },
@@ -381,6 +389,17 @@
         ]
       },
       "syncEnabled": true,
+      "defaultPermission": [
+        "read",
+        "read_content",
+        "create_content",
+        "update_content",
+        "delete_content"
+      ]
+    },
+    {
+      "name": "rate_card_standard_titles",
+      "syncEnabled": false,
       "defaultPermission": [
         "read",
         "read_content",

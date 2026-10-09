@@ -193,8 +193,8 @@ export const RateMovementReport: React.FC = () => {
 
         {!hasFamilies && (
           <span className="text-meta">
-            Grouping by job family needs a title mapping file with a family column — load one under
-            Matching.
+            Grouping by job family needs families on the standard title list, which the current
+            list does not carry. Titles are grouped by their standard title.
           </span>
         )}
       </div>

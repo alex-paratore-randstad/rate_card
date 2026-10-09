@@ -12,6 +12,8 @@ import {
   TitleAlias,
   TitleMatchMethod,
   TitleMapping,
+  StandardTitleResolution,
+  StandardTitleList,
 } from '../types/rateCard';
 import { TabId } from '../types/navigation';
 import {
@@ -30,9 +32,13 @@ import {
   saveTitleAliases,
   deleteTitleAlias,
   fetchTitleMappings,
-  replaceTitleMappings,
+  saveTitleMappings,
+  deleteTitleMapping,
   clearTitleMappings as clearStoredTitleMappings,
+  fetchStandardTitles,
+  saveStandardTitles,
 } from '../services/domoService';
+import { buildDecision, effectiveMappings, resolveTitles } from '../services/titleMappingService';
 import { normalizeClientName, resolveClients } from '../services/clientMatchService';
 import {
   fetchClientDirectoryFromDataset,
@@ -93,11 +99,25 @@ interface RateCardContextType {
   ) => Promise<void>;
   /** Send a title back to the queue. */
   unresolveTitle: (clientCode: string, cardTitle: string) => Promise<void>;
-  /** Uploaded title-to-standard-title mappings. Needs no Domo connection. */
+  /** The uploaded standard title list, or null until one is loaded. */
+  standardTitles: StandardTitleList | null;
+  /** Replace the stored list. */
+  loadStandardTitles: (list: StandardTitleList) => Promise<boolean>;
+  clearStandardTitles: () => Promise<void>;
+  /** Every distinct current card title, matched onto the standard list. */
+  titleResolutions: StandardTitleResolution[];
+  /**
+   * What reports group by: reviewed decisions, then the matcher's proposal for
+   * every title nobody has reviewed. Needs no Domo connection.
+   */
   titleMappings: TitleMapping[];
-  /** Replace the stored set with a newly uploaded file. */
-  loadTitleMappings: (mappings: TitleMapping[]) => Promise<boolean>;
-  /** Discard every stored mapping. */
+  /** Record reviewed decisions. An empty standard title means none fits. */
+  decideTitles: (
+    decisions: { resolution: StandardTitleResolution; standardTitle: string }[]
+  ) => Promise<boolean>;
+  /** Drop a decision, so the title goes back to the matcher's proposal. */
+  undoTitleDecision: (resolution: StandardTitleResolution) => Promise<void>;
+  /** Discard every reviewed decision. */
   clearTitleMappings: () => Promise<void>;
   /** Assignment actuals, or null until loaded. Fetched on demand, not at boot. */
   assignmentActuals: AssignmentActualRow[] | null;
@@ -136,7 +156,8 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [clientDirectory, setClientDirectory] = useState<ClientDirectory | null>(null);
   const [clientAliases, setClientAliases] = useState<ClientAlias[]>([]);
   const [titleAliases, setTitleAliases] = useState<TitleAlias[]>([]);
-  const [titleMappings, setTitleMappings] = useState<TitleMapping[]>([]);
+  const [titleDecisions, setTitleDecisions] = useState<TitleMapping[]>([]);
+  const [standardTitles, setStandardTitles] = useState<StandardTitleList | null>(null);
 
   const [filters, setFilters] = useState<RateCardFilterState>({ client: 'ALL', country: 'ALL' });
   const [domoAccess, setDomoAccess] = useState<DomoAccess | null>(null);
@@ -162,9 +183,15 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setClientDirectory(directory);
         setClientAliases(aliases);
         setTitleAliases(titles);
-        setTitleMappings(mappings);
+        setTitleDecisions(mappings);
       } catch (err) {
         console.warn('[Matching] Could not load the directory, aliases or mappings:', err);
+      }
+      // Separately, so a collection not yet provisioned costs only itself.
+      try {
+        setStandardTitles(await fetchStandardTitles());
+      } catch (err) {
+        console.warn('[Matching] Could not load the standard title list:', err);
       }
     } catch (err: any) {
       console.error('Failed to load rate card data:', err);
@@ -497,49 +524,94 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   /**
-   * Replace the stored mappings with a newly uploaded file.
+   * Replace the standard title list.
    *
-   * A whole-set replace rather than a merge: the file is the taxonomy, so a
-   * title it no longer lists has been removed from it deliberately. Merging
-   * would keep retired mappings alive invisibly, and there would be no way to
-   * delete one except by hand.
+   * Reviewed decisions are kept. One that names a title the new list no longer
+   * carries still applies, and shows in the review list as a standard outside
+   * the list, so it can be redone rather than silently lost.
    */
-  const loadTitleMappings: RateCardContextType['loadTitleMappings'] = async (mappings) => {
+  const loadStandardTitles: RateCardContextType['loadStandardTitles'] = async (list) => {
     try {
-      const { saved, failed, firstError } = await replaceTitleMappings(mappings);
-      setTitleMappings(saved);
-
-      if (failed) {
-        setNotificationMessage({
-          type: 'error',
-          text:
-            `Stored ${saved.length} of ${mappings.length} title mappings; ${failed} failed.` +
-            (firstError ? ` First error: ${firstError}` : ''),
-        });
-        return false;
-      }
+      await saveStandardTitles(list);
+      setStandardTitles(list);
       setNotificationMessage({
         type: 'success',
-        text: `Stored ${saved.length} title mapping${saved.length === 1 ? '' : 's'}.`,
+        text: `Loaded ${list.titles.length} standard titles. Every card title has been matched to them.`,
       });
       return true;
     } catch (err: any) {
       setNotificationMessage({
         type: 'error',
-        text: `Could not store the title mappings: ${err?.message || 'unknown error'}`,
+        text: `Could not store the standard title list: ${err?.message || 'unknown error'}`,
       });
       return false;
+    }
+  };
+
+  const clearStandardTitles = async () => {
+    try {
+      await saveStandardTitles(null);
+      setStandardTitles(null);
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not remove the standard title list: ${err?.message || 'unknown error'}`,
+      });
+    }
+  };
+
+  const decideTitles: RateCardContextType['decideTitles'] = async (items) => {
+    if (!items.length) return true;
+    const decidedAt = toDomoDateTime();
+    const decisions = items.map(({ resolution, standardTitle }) =>
+      buildDecision(resolution, standardTitle, decidedAt)
+    );
+    try {
+      const { saved, failed, firstError } = await saveTitleMappings(decisions);
+      const keys = new Set(saved.map((d) => d.uploadedTitleKey));
+      setTitleDecisions((prev) => [...saved, ...prev.filter((d) => !keys.has(d.uploadedTitleKey))]);
+      if (failed) {
+        setNotificationMessage({
+          type: 'error',
+          text:
+            `Saved ${saved.length} of ${decisions.length} title decisions; ${failed} failed.` +
+            (firstError ? ` First error: ${firstError}` : ''),
+        });
+        return false;
+      }
+      return true;
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not save the title decision: ${err?.message || 'unknown error'}`,
+      });
+      return false;
+    }
+  };
+
+  const undoTitleDecision = async (resolution: StandardTitleResolution) => {
+    if (!resolution.decision) return;
+    try {
+      await deleteTitleMapping(resolution.decision);
+      setTitleDecisions((prev) =>
+        prev.filter((d) => d.uploadedTitleKey !== resolution.uploadedTitleKey)
+      );
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not undo the title decision: ${err?.message || 'unknown error'}`,
+      });
     }
   };
 
   const clearTitleMappings = async () => {
     try {
       await clearStoredTitleMappings();
-      setTitleMappings([]);
+      setTitleDecisions([]);
     } catch (err: any) {
       setNotificationMessage({
         type: 'error',
-        text: `Could not clear the title mappings: ${err?.message || 'unknown error'}`,
+        text: `Could not clear the title decisions: ${err?.message || 'unknown error'}`,
       });
     }
   };
@@ -594,6 +666,21 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [uploadedClientCounts, clientDirectory, clientAliases]
   );
 
+  /**
+   * Matched over the current cards rather than the scoped ones: the standard
+   * list is global, so a title's match must not depend on which client happens
+   * to be selected. The review screen narrows to the scope itself.
+   */
+  const titleResolutions = useMemo(
+    () => resolveTitles(currentRateCards, standardTitles?.titles ?? [], titleDecisions),
+    [currentRateCards, standardTitles, titleDecisions]
+  );
+
+  const titleMappings = useMemo(
+    () => effectiveMappings(titleResolutions, titleDecisions),
+    [titleResolutions, titleDecisions]
+  );
+
   return (
     <RateCardContext.Provider
       value={{
@@ -619,8 +706,13 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         titleAliases,
         resolveTitleMatches,
         unresolveTitle,
+        standardTitles,
+        loadStandardTitles,
+        clearStandardTitles,
+        titleResolutions,
         titleMappings,
-        loadTitleMappings,
+        decideTitles,
+        undoTitleDecision,
         clearTitleMappings,
         assignmentActuals,
         actualsLoading,
