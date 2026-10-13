@@ -14,6 +14,7 @@ import {
   TitleMapping,
   StandardTitleResolution,
   StandardTitleList,
+  StandardTitleEdit,
 } from '../types/rateCard';
 import { TabId } from '../types/navigation';
 import {
@@ -38,7 +39,12 @@ import {
   fetchStandardTitles,
   saveStandardTitles,
 } from '../services/domoService';
-import { buildDecision, effectiveMappings, resolveTitles } from '../services/titleMappingService';
+import {
+  applyStandardTitleEdit,
+  buildDecision,
+  effectiveMappings,
+  resolveTitles,
+} from '../services/titleMappingService';
 import { normalizeClientName, resolveClients } from '../services/clientMatchService';
 import {
   fetchClientDirectoryFromDataset,
@@ -104,6 +110,13 @@ interface RateCardContextType {
   /** Replace the stored list. */
   loadStandardTitles: (list: StandardTitleList) => Promise<boolean>;
   clearStandardTitles: () => Promise<void>;
+  /**
+   * Change the stored list in place. Resolves to the titles an add skipped,
+   * or null when the edit failed (the reason is in the notification).
+   */
+  editStandardTitles: (
+    edit: StandardTitleEdit
+  ) => Promise<{ title: string; reason: string }[] | null>;
   /** Every distinct current card title, matched onto the standard list. */
   titleResolutions: StandardTitleResolution[];
   /**
@@ -560,6 +573,72 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  /**
+   * Apply one edit to the stored list.
+   *
+   * The list is read back first and the edit applied to what is stored, not
+   * to what this screen loaded: the list is one document, and two people
+   * adding titles from screens opened an hour apart would otherwise each
+   * overwrite the other's additions.
+   *
+   * Reviewed decisions follow the edit. A rename carries them to the new
+   * title. A removal clears them, so those card titles go back to automatic
+   * matching against what is left rather than pointing at a retired title.
+   */
+  const editStandardTitles: RateCardContextType['editStandardTitles'] = async (edit) => {
+    try {
+      const stored = (await fetchStandardTitles()) ?? standardTitles;
+      if (!stored) throw new Error('There is no standard title list to edit.');
+
+      const result = applyStandardTitleEdit(stored.titles, edit);
+      if (result.error) {
+        setNotificationMessage({ type: 'error', text: result.error });
+        return null;
+      }
+      if (result.titles.length === 0) {
+        setNotificationMessage({
+          type: 'error',
+          text: 'That would leave the list empty. Use Remove to discard the whole list.',
+        });
+        return null;
+      }
+
+      const next: StandardTitleList = {
+        ...stored,
+        titles: result.titles,
+        updatedAt: toDomoDateTime(),
+      };
+      await saveStandardTitles(next);
+      setStandardTitles(next);
+
+      if (edit.kind !== 'add') {
+        const fromKey = normalizeJobTitle(edit.kind === 'rename' ? edit.from : edit.title);
+        const affected = titleDecisions.filter(
+          (d) => d.standardTitle && normalizeJobTitle(d.standardTitle) === fromKey
+        );
+        if (affected.length && edit.kind === 'rename') {
+          const to = edit.to.replace(/\s+/g, ' ').trim();
+          const { saved } = await saveTitleMappings(
+            affected.map((d) => ({ ...d, standardTitle: to, standardTitleKey: normalizeJobTitle(to) }))
+          );
+          const keys = new Set(saved.map((d) => d.uploadedTitleKey));
+          setTitleDecisions((prev) => [...saved, ...prev.filter((d) => !keys.has(d.uploadedTitleKey))]);
+        } else if (affected.length) {
+          for (const d of affected) await deleteTitleMapping(d);
+          const keys = new Set(affected.map((d) => d.uploadedTitleKey));
+          setTitleDecisions((prev) => prev.filter((d) => !keys.has(d.uploadedTitleKey)));
+        }
+      }
+      return result.skipped;
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: `Could not save the change to the standard title list: ${err?.message || 'unknown error'}`,
+      });
+      return null;
+    }
+  };
+
   const decideTitles: RateCardContextType['decideTitles'] = async (items) => {
     if (!items.length) return true;
     const decidedAt = toDomoDateTime();
@@ -709,6 +788,7 @@ export const RateCardProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         standardTitles,
         loadStandardTitles,
         clearStandardTitles,
+        editStandardTitles,
         titleResolutions,
         titleMappings,
         decideTitles,

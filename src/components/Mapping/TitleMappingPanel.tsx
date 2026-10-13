@@ -10,9 +10,16 @@ import {
   RotateCcw,
   Wand2,
   ChevronDown,
+  Download,
+  ListPlus,
 } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
-import { needsReview, readStandardTitleFile } from '../../services/titleMappingService';
+import {
+  exportStandardTitles,
+  needsReview,
+  readStandardTitleFile,
+} from '../../services/titleMappingService';
+import { StandardTitleEditor } from './StandardTitleEditor';
 import { StandardTitleList, StandardTitleResolution } from '../../types/rateCard';
 import { normalizeJobTitle } from '../../services/titleService';
 import { toDomoDateTime } from '../../utils/formatters';
@@ -68,6 +75,7 @@ export const TitleMappingPanel: React.FC = () => {
   const [filter, setFilter] = useState<Filter>('review');
   const [search, setSearch] = useState('');
   const [shown, setShown] = useState(PAGE);
+  const [editorOpen, setEditorOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** The review list follows the scope bar; the matching itself does not. */
@@ -208,12 +216,28 @@ export const TitleMappingPanel: React.FC = () => {
             <span className="app-subtitle">
               {standardTitles
                 ? `${standardTitles.titles.length} standard titles from ${standardTitles.sourceFileName}` +
-                  (standardTitles.uploadedAt ? ` · loaded ${standardTitles.uploadedAt.slice(0, 10)}` : '')
+                  (standardTitles.uploadedAt ? ` · loaded ${standardTitles.uploadedAt.slice(0, 10)}` : '') +
+                  (standardTitles.updatedAt ? ` · last edited ${standardTitles.updatedAt.slice(0, 10)}` : '')
                 : 'Every card title is matched to this list · needs no Domo connection'}
             </span>
           </div>
           {standardTitles && !pending && (
-            <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button
+                className={editorOpen ? 'btn-primary' : 'btn-secondary'}
+                onClick={() => setEditorOpen((open) => !open)}
+              >
+                <ListPlus size={15} />
+                <span>{editorOpen ? 'Close editor' : 'Edit list'}</span>
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => exportStandardTitles(standardTitles, titleResolutions)}
+                title="Download the list, and how every card title matches it, as Excel"
+              >
+                <Download size={15} />
+                <span>Export</span>
+              </button>
               <button
                 className="btn-secondary"
                 onClick={() => fileInputRef.current?.click()}
@@ -291,6 +315,8 @@ export const TitleMappingPanel: React.FC = () => {
           !standardTitles && dropzone
         )}
       </div>
+
+      {standardTitles && editorOpen && !pending && <StandardTitleEditor />}
 
       {standardTitles && inScope.length === 0 && (
         <div className="tonal-card">

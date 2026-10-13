@@ -328,7 +328,15 @@ export interface StandardTitleList {
   titles: string[];
   sourceFileName: string;
   uploadedAt: string;
+  /** Last edit made in the app, after the upload. */
+  updatedAt?: string;
 }
+
+/** One change to the standard title list, made in the app. */
+export type StandardTitleEdit =
+  | { kind: 'add'; titles: string[] }
+  | { kind: 'rename'; from: string; to: string }
+  | { kind: 'remove'; title: string };
 
 /**
  * A card title resolved onto a standard title.

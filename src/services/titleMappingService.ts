@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import {
   RateCardRecord,
   StandardTitleCandidate,
+  StandardTitleEdit,
   StandardTitleList,
   TitleMapping,
   TitleMatchConfidence,
@@ -52,9 +53,13 @@ export const readStandardTitleFile = (file: File): Promise<StandardTitleList & {
           type: 'array',
         });
 
-        // The tab with the most filled cells in its first used column wins.
+        // A column headed "Standard Title" wins outright — that is how this
+        // app exports the list, and the export's second tab has a longer
+        // column of card titles that would otherwise be read instead.
+        // Failing that, the column with the most filled cells wins.
         let best: string[] = [];
         let bestSheet = '';
+        let headed = false;
         for (const name of workbook.SheetNames) {
           const matrix = XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[name], {
             header: 1,
@@ -63,9 +68,12 @@ export const readStandardTitleFile = (file: File): Promise<StandardTitleList & {
           const width = Math.max(0, ...matrix.map((r) => r.length));
           for (let col = 0; col < width; col += 1) {
             const values = matrix.map((r) => String(r[col] ?? '').trim()).filter(Boolean);
-            if (values.length > best.length) {
+            const isHeaded = /^standard titles?$/i.test(values[0] ?? '');
+            if (headed && !isHeaded) continue;
+            if ((isHeaded && !headed) || values.length > best.length) {
               best = values;
               bestSheet = name;
+              headed = headed || isHeaded;
             }
           }
         }
@@ -482,3 +490,131 @@ export const buildDecision = (
   score: resolution.candidates.find((c) => c.standardTitle === standardTitle)?.score,
   uploadedAt: decidedAt,
 });
+
+// ---------------------------------------------------------------------------
+// Maintaining the list in the app
+// ---------------------------------------------------------------------------
+
+export interface ListEditResult {
+  titles: string[];
+  /** Titles an add left out, with the reason. */
+  skipped: { title: string; reason: string }[];
+  error?: string;
+}
+
+const byTitle = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' });
+
+/**
+ * Apply one edit to a list of standard titles.
+ *
+ * Identity is the normalised key, the same as everywhere else, so "Sr Data
+ * Analyst" cannot be added beside "Senior Data Analyst" and a rename cannot
+ * land on a title that is already there. The list is kept alphabetical, which
+ * is how the uploaded list arrived and how people look things up in it.
+ */
+export const applyStandardTitleEdit = (titles: string[], edit: StandardTitleEdit): ListEditResult => {
+  const keyed = new Map(titles.map((t) => [normalizeJobTitle(t), t]));
+
+  if (edit.kind === 'add') {
+    const skipped: ListEditResult['skipped'] = [];
+    for (const raw of edit.titles) {
+      const title = raw.replace(/\s+/g, ' ').trim();
+      if (!title) continue;
+      const key = normalizeJobTitle(title);
+      const existing = keyed.get(key);
+      if (!key) skipped.push({ title, reason: 'has no letters or digits' });
+      else if (existing) skipped.push({ title, reason: `already on the list as "${existing}"` });
+      else keyed.set(key, title);
+    }
+    return { titles: Array.from(keyed.values()).sort(byTitle), skipped };
+  }
+
+  if (edit.kind === 'rename') {
+    const fromKey = normalizeJobTitle(edit.from);
+    const to = edit.to.replace(/\s+/g, ' ').trim();
+    const toKey = normalizeJobTitle(to);
+    if (!keyed.has(fromKey)) {
+      return { titles, skipped: [], error: `"${edit.from}" is no longer on the list.` };
+    }
+    if (!toKey) return { titles, skipped: [], error: 'The new title is empty.' };
+    if (toKey !== fromKey && keyed.has(toKey)) {
+      return { titles, skipped: [], error: `"${keyed.get(toKey)}" is already on the list.` };
+    }
+    keyed.delete(fromKey);
+    keyed.set(toKey, to);
+    return { titles: Array.from(keyed.values()).sort(byTitle), skipped: [] };
+  }
+
+  const key = normalizeJobTitle(edit.title);
+  keyed.delete(key);
+  return { titles: Array.from(keyed.values()).sort(byTitle), skipped: [] };
+};
+
+/** How many current card titles, and records, each standard title holds. */
+export const standardTitleUsage = (
+  resolutions: StandardTitleResolution[]
+): Map<string, { cardTitles: number; records: number }> => {
+  const usage = new Map<string, { cardTitles: number; records: number }>();
+  for (const r of resolutions) {
+    if (!r.standardTitle) continue;
+    const key = normalizeJobTitle(r.standardTitle);
+    const entry = usage.get(key) ?? { cardTitles: 0, records: 0 };
+    entry.cardTitles += 1;
+    entry.records += r.recordCount;
+    usage.set(key, entry);
+  }
+  return usage;
+};
+
+const STATUS_LABEL: Record<StandardTitleResolution['status'], string> = {
+  confirmed: 'Reviewed',
+  rejected: 'Reviewed - none fits',
+  auto: 'Automatic',
+  unmatched: 'No match',
+};
+
+/**
+ * The list as a workbook: the titles on the first tab, how every card title
+ * resolves on the second. The first tab is headed "Standard Title" so the
+ * file can be uploaded again as it is.
+ */
+export const exportStandardTitles = (
+  list: StandardTitleList,
+  resolutions: StandardTitleResolution[]
+): void => {
+  const usage = standardTitleUsage(resolutions);
+  const listRows = [...list.titles].sort(byTitle).map((title) => {
+    const u = usage.get(normalizeJobTitle(title));
+    return {
+      'Standard Title': title,
+      'Card Titles Matched': u?.cardTitles ?? 0,
+      Records: u?.records ?? 0,
+    };
+  });
+
+  const matchRows = [...resolutions]
+    .sort((a, b) => byTitle(a.uploadedTitle, b.uploadedTitle))
+    .map((r) => ({
+      'Card Title': r.uploadedTitle,
+      Level: r.level ?? '',
+      'Matched Standard Title': r.standardTitle ?? '',
+      Status: STATUS_LABEL[r.status],
+      Confidence:
+        r.decision || r.confidence === 'none'
+          ? ''
+          : r.confidence.charAt(0).toUpperCase() + r.confidence.slice(1),
+      Score: r.proposed && !r.decision ? Math.round(r.proposed.score * 100) / 100 : '',
+      Records: r.recordCount,
+    }));
+
+  const workbook = XLSX.utils.book_new();
+  const listSheet = XLSX.utils.json_to_sheet(listRows);
+  listSheet['!cols'] = [{ wch: 40 }, { wch: 20 }, { wch: 10 }];
+  XLSX.utils.book_append_sheet(workbook, listSheet, 'Standard Titles');
+  const matchSheet = XLSX.utils.json_to_sheet(matchRows);
+  matchSheet['!cols'] = [{ wch: 40 }, { wch: 12 }, { wch: 40 }, { wch: 20 }, { wch: 12 }, { wch: 8 }, { wch: 10 }];
+  XLSX.utils.book_append_sheet(workbook, matchSheet, 'Title Matches');
+
+  const date = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(workbook, `Standard Titles ${date}.xlsx`);
+};
