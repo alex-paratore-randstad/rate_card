@@ -94,6 +94,45 @@ const maxByLine = (records: RateCardRecord[]) => {
   );
 };
 
+export interface PairedLine {
+  /** The later year's record, which carries the line's title and country. */
+  record: RateCardRecord;
+  /** Percent change in the maximum, e.g. 4.2 for +4.2%. */
+  change: number;
+}
+
+/**
+ * Every line present in both years, with its change. Shared with the
+ * concentration report so the two cannot disagree about what moved.
+ */
+export const pairLines = (
+  records: RateCardRecord[],
+  fromYear: string,
+  toYear: string
+): { lines: PairedLine[]; onlyInFrom: number; onlyInTo: number; unusable: number } => {
+  const from = maxByLine(records.filter((r) => r.rateYear === fromYear));
+  const to = maxByLine(records.filter((r) => r.rateYear === toYear));
+  const lines: PairedLine[] = [];
+  let onlyInFrom = 0;
+  let unusable = 0;
+
+  for (const [key, before] of from) {
+    const after = to.get(key);
+    if (!after) {
+      onlyInFrom += 1;
+      continue;
+    }
+    if (!(before.max > 0) || !(after.max > 0)) {
+      unusable += 1;
+      continue;
+    }
+    lines.push({ record: after.record, change: (after.max / before.max - 1) * 100 });
+  }
+
+  const onlyInTo = Array.from(to.keys()).filter((key) => !from.has(key)).length;
+  return { lines, onlyInFrom, onlyInTo, unusable };
+};
+
 /** True when the mapping file carries a family for at least one title. */
 export const mappingsHaveFamilies = (mappings: TitleMapping[]): boolean =>
   mappings.some((m) => !!m.family);
@@ -112,29 +151,16 @@ export const computeRateMovement = (
     return mapping?.standardTitle || title;
   };
 
-  const from = maxByLine(records.filter((r) => r.rateYear === fromYear));
-  const to = maxByLine(records.filter((r) => r.rateYear === toYear));
+  const pairing = pairLines(records, fromYear, toYear);
 
   const cellAcc = new Map<string, Map<string, Accumulator>>();
   const rowAcc = new Map<string, Accumulator>();
   const regionAcc = new Map<string, Accumulator>();
   const overallAcc: Accumulator = { sum: 0, lines: 0 };
-  let onlyInFrom = 0;
-  let unusable = 0;
 
-  for (const [key, before] of from) {
-    const after = to.get(key);
-    if (!after) {
-      onlyInFrom += 1;
-      continue;
-    }
-    if (!(before.max > 0) || !(after.max > 0)) {
-      unusable += 1;
-      continue;
-    }
-    const change = (after.max / before.max - 1) * 100;
-    const label = rowLabel(after.record.jobTitle);
-    const region = regionForCountry(after.record.country || '');
+  for (const { record, change } of pairing.lines) {
+    const label = rowLabel(record.jobTitle);
+    const region = regionForCountry(record.country || '');
 
     const cells = cellAcc.get(label) ?? new Map<string, Accumulator>();
     add(cells, region, change);
@@ -145,7 +171,7 @@ export const computeRateMovement = (
     overallAcc.lines += 1;
   }
 
-  const onlyInTo = Array.from(to.keys()).filter((key) => !from.has(key)).length;
+  const { onlyInFrom, onlyInTo, unusable } = pairing;
 
   const order = [...REGIONS, OTHER_REGION] as string[];
   const regions = order.filter((r) => regionAcc.has(r));

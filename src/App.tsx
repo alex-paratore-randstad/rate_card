@@ -15,6 +15,7 @@ import { TemplateComplianceReport } from './components/Dashboard/TemplateComplia
 import { RegionalReport } from './components/Dashboard/RegionalReport';
 import { CardQualityReport } from './components/Reports/CardQualityReport';
 import { RateMovementReport } from './components/Reports/RateMovementReport';
+import { RateConcentrationReport } from './components/Reports/RateConcentrationReport';
 import { TitleMappingPanel } from './components/Mapping/TitleMappingPanel';
 import { MethodReference } from './components/Method/MethodReference';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
@@ -90,6 +91,14 @@ const MainLayout: React.FC = () => {
           <>
             <ClientScopeBar />
             <RateMovementReport />
+          </>
+        )}
+
+        {/* Card change against Domo spend — the one report here needing actuals. */}
+        {activeTab === 'concentration' && (
+          <>
+            <ClientScopeBar />
+            <RateConcentrationReport />
           </>
         )}
 

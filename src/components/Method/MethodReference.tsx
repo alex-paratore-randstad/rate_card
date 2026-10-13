@@ -12,6 +12,7 @@ import {
   SlidersHorizontal,
   TableProperties,
   TrendingUp,
+  Target,
 } from 'lucide-react';
 import * as ClientMatch from '../../services/clientMatchService';
 import * as TitleMatch from '../../services/titleMatchService';
@@ -601,6 +602,32 @@ cell   = mean change of the lines in that row and region`}</Formula>
         year are counted and left out. Every line counts once — the card has no volume, so the
         figure is not spend-weighted. Rows are standard titles where a card title has one, and the
         card title where it does not; regions group whole countries.
+      </Calc>
+    </Section>
+
+    <Section
+      icon={<Target size={20} color="var(--randstad-blue-primary)" />}
+      title="Rate concentration"
+      subtitle="Which roles carry the cost of a rate change. The card change, against Domo spend."
+    >
+      <Calc
+        name="Role position"
+        answers="How much did a role's maximum move, and how much is spent on it?"
+      >
+        <Formula>{`change  = Σ (line change × line spend) ÷ Σ line spend, per role
+spend   = Σ bill_dollars × (pay_rate_st_hr_usd ÷ pay_rate_st_hr), in USD
+workers = open assignments
+impact  = spend × change`}</Formula>
+        Lines pair across years exactly as in rate movement, then join to the actuals on client
+        code, country, and title through the confirmed client and title matches. A role is its
+        standard title. The actuals carry no USD bill amount, so each row&apos;s own pay-rate
+        conversion is its exchange rate; a row with neither is left out and counted. Spend is to
+        date, not trailing twelve months: the dataset has no reporting month to window by.
+      </Calc>
+      <Calc name="Watch list" answers="Where should rates be agreed first?">
+        <Formula>{`change > spend-weighted portfolio change
+spend  ≥ median role spend
+ranked by impact`}</Formula>
       </Calc>
     </Section>
 

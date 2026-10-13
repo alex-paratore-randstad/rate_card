@@ -18,6 +18,7 @@ export type TabId =
   /** Reports, on uploaded data */
   | 'cardquality'
   | 'movement'
+  | 'concentration'
   /** Matching, from the uploaded mapping file */
   | 'mappings'
   /** Supplemental Data, everything needing the Domo connection */
