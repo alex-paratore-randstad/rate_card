@@ -133,6 +133,51 @@ const firstMappedValue = (
   return undefined;
 };
 
+const US_LOCATION = /\b(us|usa|united states|national|nationwide)\b/;
+
+/** How well a stacked rate column fits the default: bill over pay, US first. */
+const stackedRateScore = (header: string): number => {
+  const text = header.toLowerCase();
+  let score = 0;
+  if (/\bbill\b/.test(text)) score += 2;
+  if (/\bpay\b/.test(text)) score -= 2;
+  if (US_LOCATION.test(text)) score += 1;
+  return score;
+};
+
+/**
+ * A stacked file repeats Min and Max under every location and under both pay
+ * and bill, so several columns map to the same field — and ingestion reads the
+ * first, which would be the leftmost pay column. Keep the best-scoring column
+ * for each and set the rest to ignore; the user can still repoint them in the
+ * mapping modal. Returns the band label chosen, or undefined when nothing was
+ * ambiguous.
+ */
+const preferStackedRateColumns = (mappings: ColumnMapping[]): string | undefined => {
+  let chosenBand: string | undefined;
+
+  for (const field of ['minRate', 'maxRate'] as const) {
+    const candidates = mappings.filter(
+      (m) => m.targetField === field && m.rawHeader.includes(BAND_SEPARATOR)
+    );
+    if (candidates.length < 2) continue;
+
+    // Ties go to the leftmost column, the order the sheet presents them in.
+    const best = candidates.reduce((a, b) =>
+      stackedRateScore(b.rawHeader) > stackedRateScore(a.rawHeader) ? b : a
+    );
+    for (const m of candidates) {
+      if (m === best) continue;
+      m.targetField = 'ignore';
+      m.confidence = 0;
+      m.isAutoMapped = false;
+    }
+    chosenBand = best.rawHeader.split(BAND_SEPARATOR).slice(0, -1).join(BAND_SEPARATOR);
+  }
+
+  return chosenBand;
+};
+
 /**
  * Shared preview assembly for both file formats, so CSV and XLSX cannot drift.
  */
@@ -149,6 +194,13 @@ const buildPreview = (
   });
 
   const validationErrors: string[] = [];
+
+  const chosenBand = preferStackedRateColumns(mappings);
+  if (chosenBand) {
+    validationErrors.push(
+      `Note: Min and Max are read from the "${chosenBand}" columns. Other locations and pay columns are ignored — change the mapping below if that is wrong.`
+    );
+  }
   if (!mappings.some((m) => m.targetField === 'jobTitle')) {
     validationErrors.push('Warning: Could not automatically detect a "Job Title" column.');
   }
@@ -322,10 +374,72 @@ export const unpivotYearColumns = (
   return { headers, rows, years, sourceRowCount: dataRows.length };
 };
 
+// ---------------------------------------------------------------------------
+// Stacked headers
+//
+// Some rate cards name each column across several header rows: a location
+// band, a Pay Rate / Bill Rate band, then "Min Rate" / "Max Rate". The bands
+// are merged cells, so only the first column of each span carries the label.
+// Those rows are folded into one header per column, e.g.
+// "US Remote › Bill Rate › MRA Suggested Min Rate".
+// ---------------------------------------------------------------------------
+
+export const BAND_SEPARATOR = ' › ';
+
+/** How far down to look for the real header row before giving up. */
+const HEADER_SCAN_ROWS = 10;
+
+/** The row holding the column names: the first one with a job title header. */
+const findHeaderRow = (matrix: RawMatrix): number => {
+  const limit = Math.min(matrix.length, HEADER_SCAN_ROWS);
+  for (let r = 0; r < limit; r++) {
+    const row = matrix[r] ?? [];
+    if (row.some((c) => HEADER_ALIASES.jobTitle.includes(headerCore(cellText(c))))) return r;
+  }
+  return 0;
+};
+
+/**
+ * Fold the band rows above the header row into the header itself. A file whose
+ * header is already row 0 is returned untouched.
+ */
+export const flattenStackedHeaders = (matrix: RawMatrix): RawMatrix => {
+  const headerRow = findHeaderRow(matrix);
+  if (headerRow === 0) return matrix;
+
+  const width = matrix.reduce((max, row) => Math.max(max, row?.length ?? 0), 0);
+  const names = Array.from({ length: width }, (_, c) => cellText(matrix[headerRow]?.[c]));
+  const bands = matrix
+    .slice(0, headerRow)
+    .map((row) => Array.from({ length: width }, (_, c) => cellText(row?.[c])));
+
+  // Carry each merged label rightward across its span. A label stops where the
+  // band above it changes, so "Bill Rate" under US Remote never spills into
+  // the next location.
+  bands.forEach((band, r) => {
+    for (let c = 1; c < width; c++) {
+      if (band[c] || !band[c - 1] || !names[c]) continue;
+      if (bands.slice(0, r).every((upper) => upper[c] === upper[c - 1])) band[c] = band[c - 1];
+    }
+  });
+
+  // A band with one value across every column (a sheet title) says nothing
+  // about any column, so it is left out of the headers.
+  const informative = bands.filter(
+    (band) => new Set(band.filter((_, c) => names[c])).size > 1
+  );
+
+  const header = names.map((name, c) =>
+    name ? [...informative.map((band) => band[c]).filter(Boolean), name].join(BAND_SEPARATOR) : ''
+  );
+  return [header, ...matrix.slice(headerRow + 1)];
+};
+
 /** Resolve a matrix to long rows using whichever layout it matches. */
 const layoutRows = (
-  matrix: RawMatrix
+  rawMatrix: RawMatrix
 ): { headers: string[]; rows: Record<string, any>[]; years: string[]; sourceRowCount: number } => {
+  const matrix = flattenStackedHeaders(rawMatrix);
   if (detectYearColumnLayout(matrix)) {
     const { headers, rows, years, sourceRowCount } = unpivotYearColumns(matrix);
     return { headers, rows, years, sourceRowCount };
