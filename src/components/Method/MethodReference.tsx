@@ -565,18 +565,6 @@ tiers matter when the spread exceeds ${pct(Regional.MATERIAL_SPREAD)}`}</Formula
       title="Card quality checks"
       subtitle="Run at upload, on the Reports tab, and again on the compliance tab."
     >
-      <Calc
-        name="Formula-derived band"
-        answers="Is the maximum a real ceiling, or the minimum times a constant?"
-      >
-        <Formula>{`ratios = max ÷ min, per title
-flagged when ≥ ${pct(CardQuality.FORMULA_SHARE)} of at least ${CardQuality.FORMULA_MIN_ROWS} titles sit within
-${pct(CardQuality.RATIO_TOLERANCE)} of the median ratio`}</Formula>
-        A tolerance around the median rather than exact buckets: a source rounded to the cent
-        makes one formula land on ratios differing in the fourth decimal, and bucketing by three
-        decimals split 11/9 in two and missed it entirely.
-      </Calc>
-
       <Calc name="Structural checks" answers="Is the band usable at all?">
         <Formula>{`min > max        columns mapped the wrong way round
 min = max        no width; only one exact rate passes
@@ -659,9 +647,6 @@ ranked by impact`}</Formula>
               ['Regional', 'Minimum assignments per region', Regional.MIN_ASSIGNMENTS],
               ['Regional', 'Minimum hours per region', Regional.MIN_HOURS],
               ['Regional', 'Spread at which tiers matter', Regional.MATERIAL_SPREAD],
-              ['Card quality', 'Share of titles on one ratio', CardQuality.FORMULA_SHARE],
-              ['Card quality', 'Minimum titles to call it a formula', CardQuality.FORMULA_MIN_ROWS],
-              ['Card quality', 'Ratio tolerance around the median', CardQuality.RATIO_TOLERANCE],
               ['Card quality', 'Band width called implausible', CardQuality.IMPLAUSIBLE_RATIO],
             ].map(([where, name, value]) => (
               <tr key={`${where}-${name}`}>

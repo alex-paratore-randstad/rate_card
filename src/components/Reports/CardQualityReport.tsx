@@ -24,12 +24,7 @@ const SEVERITY_LABEL: Record<'high' | 'medium', string> = {
 export const CardQualityReport: React.FC = () => {
   const { scopedRateCards, filters } = useRateCard();
 
-  /**
-   * Audited a year at a time. The formula check works by finding one ratio that
-   * dominates the card, and two years stacked together would present two
-   * cards' worth of bands as one — a card that is formulaic in 2025 and
-   * genuine in 2026 would dilute to neither.
-   */
+  /** Audited a year at a time, so each year's card reports its own problems. */
   const byYear = useMemo(() => {
     const years = Array.from(new Set(scopedRateCards.map((r) => r.rateYear))).sort().reverse();
     return years.map((year) => {

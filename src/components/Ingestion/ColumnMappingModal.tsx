@@ -58,9 +58,9 @@ const ColumnMappingForm: React.FC<{ previewData: IngestionPreviewData }> = ({ pr
    * Audit the records this dialog would save, not the raw rows.
    *
    * Run here because this is the last moment before a card becomes the basis
-   * of a report. A band whose max is a formula produces compliance figures
-   * that look entirely reasonable, and the cheapest place to notice is before
-   * anything is stored.
+   * of a report. A band that is inverted, empty or implausibly wide produces
+   * compliance figures that look entirely reasonable, and the cheapest place to
+   * notice is before anything is stored.
    */
   const cardIssues = useMemo(() => {
     if (!previewData) return [];
