@@ -1,10 +1,12 @@
-import React from 'react';
-import { Database, RefreshCw, UploadCloud, Cloud, CloudOff } from 'lucide-react';
+import React, { useState } from 'react';
+import { Database, RefreshCw, UploadCloud, Cloud, CloudOff, MessageSquarePlus } from 'lucide-react';
 import { useRateCard } from '../context/RateCardContext';
+import { FeedbackDialog } from './Feedback/FeedbackPrompt';
 
 
 export const Header: React.FC = () => {
   const { setActiveTab, refreshDataset, isLoading, rateCards, domoAccess } = useRateCard();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   return (
     <header className="brand-header">
@@ -61,11 +63,22 @@ export const Header: React.FC = () => {
           <span>Sync Domo</span>
         </button>
 
+        <button
+          className="btn-secondary"
+          onClick={() => setFeedbackOpen(true)}
+          title="Tell us about anything on this screen"
+        >
+          <MessageSquarePlus size={16} />
+          <span>Feedback</span>
+        </button>
+
         <button className="btn-primary" onClick={() => setActiveTab('ingest')}>
           <UploadCloud size={16} />
           <span>Ingest Rate Card</span>
         </button>
       </div>
+
+      {feedbackOpen && <FeedbackDialog onClose={() => setFeedbackOpen(false)} />}
     </header>
   );
 };

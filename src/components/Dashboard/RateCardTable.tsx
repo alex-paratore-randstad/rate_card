@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { Search, TableProperties, Plus, X, ChevronRight, ChevronDown } from 'lucide-react';
+import { Search, TableProperties, Plus, X, ChevronRight, ChevronDown, Flag } from 'lucide-react';
 import { useRateCard } from '../../context/RateCardContext';
 import { formatDateRandstad } from '../../utils/formatters';
 import { normalizeJobTitle } from '../../services/titleService';
+import { FeedbackDialog } from '../Feedback/FeedbackPrompt';
 
 /**
  * The uploaded rate card, read across however many years are loaded.
@@ -118,6 +119,8 @@ export const RateCardTable: React.FC = () => {
   // Without any standard titles there is nothing to group by.
   const grouping: Grouping = hasStandards ? groupingChoice : 'card';
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  /** The row a reviewer is flagging, described as the feedback target. */
+  const [flagging, setFlagging] = useState<string | null>(null);
 
   const standardFor = useMemo(() => {
     const map = new Map<string, string>();
@@ -489,7 +492,7 @@ export const RateCardTable: React.FC = () => {
                   (group.members.length > 1 || group.members[0].jobTitle !== group.label);
                 return (
                   <React.Fragment key={key}>
-                    <tr>
+                    <tr className="flaggable-row">
                       <td style={{ fontWeight: 600 }}>
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
                           {expandable && (
@@ -522,6 +525,18 @@ export const RateCardTable: React.FC = () => {
                               </div>
                             )}
                           </div>
+                          <button
+                            className="row-flag"
+                            onClick={() =>
+                              setFlagging(
+                                `${group.label}${group.laborType ? ` (${group.laborType})` : ''} · ` +
+                                  shownYears.join(', ')
+                              )
+                            }
+                            title="Flag this row — something looks off"
+                          >
+                            <Flag size={13} />
+                          </button>
                         </div>
                       </td>
                       <td>{group.laborType || '—'}</td>
@@ -614,6 +629,16 @@ export const RateCardTable: React.FC = () => {
             </span>
           ))}
         </div>
+      )}
+
+      {flagging && (
+        <FeedbackDialog
+          title="Flag this row"
+          target={flagging}
+          initialCategory="data_accuracy"
+          prompt="What looks off about this row?"
+          onClose={() => setFlagging(null)}
+        />
       )}
     </div>
   );

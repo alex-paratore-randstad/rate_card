@@ -473,3 +473,24 @@ h3 { font-size: 1.1rem; font-weight: 600; }
   padding: 32px;
   box-shadow: var(--shadow-hover);
 }
+
+/* Per-row feedback flag: out of the way until the row is hovered. */
+.row-flag {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--on-surface-subtle);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.flaggable-row:hover .row-flag,
+.row-flag:focus-visible {
+  opacity: 1;
+}
+
+.row-flag:hover {
+  color: var(--randstad-blue-primary);
+}

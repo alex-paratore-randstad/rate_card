@@ -8,6 +8,7 @@ import {
   TitleAlias,
   TitleMapping,
 } from '../types/rateCard';
+import { FeedbackEntry } from '../types/feedback';
 import { countryKey } from './countryService';
 import { collapseDirectoryByClientCode } from './clientMatchService';
 
@@ -23,6 +24,8 @@ const COLLECTION_TITLE_ALIASES = 'rate_card_title_aliases';
 const COLLECTION_TITLE_MAPPINGS = 'rate_card_title_mappings';
 /** The standard title list; one document holding the whole list. */
 const COLLECTION_STANDARD_TITLES = 'rate_card_standard_titles';
+/** Reviewer feedback from the in-app prompts; one document each. */
+const COLLECTION_FEEDBACK = 'rate_card_feedback';
 const COLLECTIONS_BASE = '/domo/datastores/v1/collections';
 
 const LOCAL_RECORDS_KEY = 'randstad_rate_cards';
@@ -32,6 +35,7 @@ const LOCAL_ALIASES_KEY = 'randstad_client_aliases';
 const LOCAL_TITLE_ALIASES_KEY = 'randstad_title_aliases';
 const LOCAL_TITLE_MAPPINGS_KEY = 'randstad_title_mappings';
 const LOCAL_STANDARD_TITLES_KEY = 'randstad_standard_titles';
+const LOCAL_FEEDBACK_KEY = 'randstad_feedback';
 
 /** How many collection writes to keep in flight at once. */
 const WRITE_CONCURRENCY = 25;
@@ -916,4 +920,42 @@ export const clearTitleMappings = async (): Promise<void> => {
   await writeInChunks(existing, (m) =>
     domoDelete(`${COLLECTIONS_BASE}/${COLLECTION_TITLE_MAPPINGS}/documents/${m.id}`)
   );
+};
+
+// ---------------------------------------------------------------------------
+// Feedback
+//
+// Append-only: one document per submission, never revised from the app. The
+// collection syncs to a dataset so it can be triaged in Domo like any other.
+// ---------------------------------------------------------------------------
+
+export const fetchFeedback = async (): Promise<FeedbackEntry[]> => {
+  if ((await probeDomoAccess()) !== 'none') {
+    const docs = await domoGet(`${COLLECTIONS_BASE}/${COLLECTION_FEEDBACK}/documents/`);
+    return unwrapWithIds<FeedbackEntry>(docs).map((d) => ({ ...d.content, id: d.id }));
+  }
+
+  const localData = localStorage.getItem(LOCAL_FEEDBACK_KEY);
+  if (localData) {
+    try {
+      return JSON.parse(localData) as FeedbackEntry[];
+    } catch {
+      // ignore parse errors
+    }
+  }
+  return [];
+};
+
+/** Store one submission. Returns where it landed, so the prompt can say so. */
+export const saveFeedback = async (entry: FeedbackEntry): Promise<'domo' | 'local'> => {
+  const { id: _ignored, ...content } = entry;
+
+  if ((await probeDomoAccess()) !== 'none') {
+    await domoPost(`${COLLECTIONS_BASE}/${COLLECTION_FEEDBACK}/documents/`, { content });
+    return 'domo';
+  }
+
+  const existing = await fetchFeedback();
+  localStorage.setItem(LOCAL_FEEDBACK_KEY, JSON.stringify([content, ...existing]));
+  return 'local';
 };

@@ -18,7 +18,25 @@ import { RateMovementReport } from './components/Reports/RateMovementReport';
 import { RateConcentrationReport } from './components/Reports/RateConcentrationReport';
 import { TitleMappingPanel } from './components/Mapping/TitleMappingPanel';
 import { MethodReference } from './components/Method/MethodReference';
+import { FeedbackPrompt } from './components/Feedback/FeedbackPrompt';
 import { CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { TabId } from './types/navigation';
+
+/**
+ * Screens where people review the data, and so where the feedback strip goes.
+ * Ingest and the matching screens are data entry, which is not what feedback is
+ * being gathered on; the header button still reaches them.
+ */
+const REVIEW_SCREENS: Partial<Record<TabId, string>> = {
+  dashboard: 'Was this rate card view useful for your review?',
+  cardquality: 'Were these card quality checks useful?',
+  movement: 'Was this rate movement report useful?',
+  concentration: 'Was this concentration report useful?',
+  coverage: 'Was this coverage report useful?',
+  compliance: 'Were these compliance findings useful?',
+  regional: 'Was this regional view useful?',
+  method: 'Did this explain the figures clearly enough?',
+};
 
 const MainLayout: React.FC = () => {
   const { activeTab, notificationMessage, clearNotification } = useRateCard();
@@ -151,6 +169,12 @@ const MainLayout: React.FC = () => {
 
         {/* No scope bar: the method does not vary by client or country. */}
         {activeTab === 'method' && <MethodReference />}
+
+        {/* Keyed on the screen so an open form does not follow the reviewer
+            to the next tab. */}
+        {REVIEW_SCREENS[activeTab] && (
+          <FeedbackPrompt key={activeTab} question={REVIEW_SCREENS[activeTab]} />
+        )}
       </main>
 
       <ColumnMappingModal />

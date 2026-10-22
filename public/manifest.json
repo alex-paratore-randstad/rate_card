@@ -450,6 +450,64 @@
         "update_content",
         "delete_content"
       ]
+    },
+    {
+      "name": "rate_card_feedback",
+      "schema": {
+        "columns": [
+          {
+            "name": "screen",
+            "type": "STRING"
+          },
+          {
+            "name": "screenLabel",
+            "type": "STRING"
+          },
+          {
+            "name": "target",
+            "type": "STRING"
+          },
+          {
+            "name": "category",
+            "type": "STRING"
+          },
+          {
+            "name": "rating",
+            "type": "STRING"
+          },
+          {
+            "name": "comment",
+            "type": "STRING"
+          },
+          {
+            "name": "client",
+            "type": "STRING"
+          },
+          {
+            "name": "country",
+            "type": "STRING"
+          },
+          {
+            "name": "userId",
+            "type": "STRING"
+          },
+          {
+            "name": "submittedAt",
+            "type": "DATETIME"
+          },
+          {
+            "name": "status",
+            "type": "STRING"
+          }
+        ]
+      },
+      "syncEnabled": true,
+      "defaultPermission": [
+        "read",
+        "read_content",
+        "create_content",
+        "update_content"
+      ]
     }
   ],
   "id": "75a49585-dd65-418d-a47e-1cfd560703e7",
