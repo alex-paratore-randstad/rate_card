@@ -370,7 +370,7 @@ auto-accept ≥ ${TitleMatch.AUTO_RESOLVE_SCORE} · propose ≥ ${TitleMatch.SUG
         <Formula>{`title matching   card title  →  Domo title_cleaned   per client, confirmed before use
 standard titles  card title  →  standard title      global, applied at once, reviewed after`}</Formula>
         The two are stored separately and neither reads the other. Only the matcher feeds the
-        Supplemental Data reports; the standard titles feed Rate Movement.
+        Domo-backed reports; the standard titles feed Rate Movement.
       </Calc>
 
       <Calc name="Seniority" answers="Why does Senior Software Engineer II match Software Engineer?">

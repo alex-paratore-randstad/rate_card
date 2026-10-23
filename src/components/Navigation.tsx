@@ -33,21 +33,13 @@ interface TabGroup {
 }
 
 /**
- * Top-level navigation, grouped by where the data comes from.
+ * Top-level navigation: Command Center, Reports, Data, Method.
  *
- * That is the organising idea, and it is worth stating because an earlier
- * grouping used a different one. Tabs were previously gathered by what they
- * were *for* — matching here, reports there — which read sensibly but hid the
- * thing that actually determines whether a screen works: six of them do
- * nothing at all without a live Domo connection and a round of manual
- * matching, and they sat interleaved with the screens that only need an
- * uploaded file. Someone with a spreadsheet and no connection had no way to
- * tell which half of the app was theirs.
- *
- * So everything built on the uploaded rate card comes first, and everything
- * needing the connected datasets is gathered under Supplemental Data. Method
- * stays last and alone: it explains every other tab rather than belonging to
- * one.
+ * The two areas people read from come first. Everything that gets data in or
+ * lines it up — the upload, the standard-title mapping, the client and title
+ * matching, and the coverage and compliance checks against Domo — sits under
+ * one Data tab, so the setup work is in one place. Method stays last and
+ * alone: it explains every other tab rather than belonging to one.
  *
  * `activeTab` stays a flat id rather than becoming a group plus a member. The
  * grouping is presentation, every existing route still resolves, and a group is
@@ -64,12 +56,6 @@ export const TAB_GROUPS: TabGroup[] = [
     ],
   },
   {
-    id: 'ingest',
-    label: 'Ingest Rate Card',
-    icon: FileUp,
-    members: [{ id: 'ingest', label: 'Ingest Rate Card', icon: FileUp }],
-  },
-  {
     id: 'reports',
     label: 'Reports',
     icon: ClipboardCheck,
@@ -77,27 +63,23 @@ export const TAB_GROUPS: TabGroup[] = [
       { id: 'cardquality', label: 'Card Quality', icon: ShieldCheck },
       { id: 'movement', label: 'Rate Movement', icon: TrendingUp },
       { id: 'concentration', label: 'Concentration', icon: Target },
+      { id: 'regional', label: 'Regional', icon: Map },
     ],
   },
+  // Getting data in and lined up: the upload, the matching that the reports
+  // read through, then coverage and compliance, which check how well the cards
+  // line up against the Domo actuals. Ordered as the work is done.
   {
-    id: 'matching',
-    label: 'Matching',
-    icon: Link2,
-    members: [{ id: 'mappings', label: 'Standard Titles', icon: Tags }],
-  },
-  // Everything from here needs the connected datasets. Grouped together so the
-  // "load actuals" prompt is a property of one area rather than a surprise on
-  // five separate screens.
-  {
-    id: 'supplemental',
-    label: 'Supplemental Data',
+    id: 'data',
+    label: 'Data',
     icon: Database,
     members: [
+      { id: 'ingest', label: 'Ingest Rate Card', icon: FileUp },
+      { id: 'mappings', label: 'Standard Titles', icon: Tags },
       { id: 'clients', label: 'Clients', icon: Link2 },
       { id: 'titles', label: 'Titles', icon: Tags },
       { id: 'coverage', label: 'Card Coverage', icon: ShieldCheck },
       { id: 'compliance', label: 'Card Compliance', icon: Scale },
-      { id: 'regional', label: 'Regional', icon: Map },
     ],
   },
   {

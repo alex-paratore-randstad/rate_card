@@ -14,17 +14,16 @@ export type TabId =
   /** Command Center */
   | 'dashboard'
   | 'collection'
-  | 'ingest'
-  /** Reports, on uploaded data */
+  /** Reports */
   | 'cardquality'
   | 'movement'
   | 'concentration'
-  /** Matching, from the uploaded mapping file */
+  | 'regional'
+  /** Data: ingest, matching, and the coverage and compliance checks */
+  | 'ingest'
   | 'mappings'
-  /** Supplemental Data, everything needing the Domo connection */
   | 'clients'
   | 'titles'
   | 'coverage'
   | 'compliance'
-  | 'regional'
   | 'method';

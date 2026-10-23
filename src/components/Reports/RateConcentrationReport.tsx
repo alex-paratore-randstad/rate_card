@@ -241,8 +241,8 @@ export const RateConcentrationReport: React.FC = () => {
       <>
         No role on both cards matched any spend in the actuals.
         {result?.unresolvedClients.length
-          ? ` ${result.unresolvedClients.length} card client(s) are not matched to a Domo client yet — resolve them under Supplemental Data → Clients.`
-          : ' Check the title matches under Supplemental Data → Titles.'}
+          ? ` ${result.unresolvedClients.length} card client(s) are not matched to a Domo client yet — resolve them under Data → Clients.`
+          : ' Check the title matches under Data → Titles.'}
       </>
     );
   }
