@@ -1,0 +1,14 @@
+{
+  "live": {
+    "instance": "randstad-sbxb.domo.com"
+  },
+  "test": {
+    "instance": "randstad-sbxb.domo.com",
+    "name": "Randstad Rate Card Tracker – TEST",
+    "designId": "e158ebfd-479a-4a4a-9268-68519888346d",
+    "datasets": {
+      "rate_card_client_directory": "b9516b00-59b7-47b9-9c60-2c2b1f97df6c",
+      "rate_card_actuals_assignment": "aab713e2-de9e-4b98-97a0-e56d40134b56"
+    }
+  }
+}

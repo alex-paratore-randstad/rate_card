@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node node_modules/vite/bin/vite.js",
     "build": "node node_modules/typescript/bin/tsc && node node_modules/vite/bin/vite.js build",
-    "deploy": "npm run build && cd dist && node ../node_modules/ryuu/dist/bin/domo.js publish",
+    "deploy": "node scripts/publish.mjs live",
+    "deploy:test": "node scripts/publish.mjs test",
+    "sample-data": "node scripts/generate-sample-data.mjs",
     "domo": "node node_modules/ryuu/dist/bin/domo.js",
     "lint": "tsc",
     "preview": "vite preview"
