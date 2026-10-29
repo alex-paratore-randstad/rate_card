@@ -1,0 +1,27 @@
+Client,Country,Job Title,Labor Type,Min Rate (2025),Max Rate (2025),Min Rate (2026),Max Rate (2026)
+Globex,USA,Customer Service Rep,Professional,18.50,24.25,19.00,25.00
+Globex,USA,Data Entry Clerk,Professional,16.75,22.00,17.50,23.00
+Globex,USA,Receptionist,Professional,17.50,24.25,18.00,24.75
+Globex,USA,Administrative Assistant,Professional,19.50,24.50,21.00,26.50
+Globex,USA,Accounts Payable Specialist,Professional,24.00,31.50,24.00,31.50
+Globex,USA,Staff Accountant,Professional,30.75,40.25,32.00,41.75
+Globex,USA,Financial Analyst II,Professional,38.00,51.50,38.00,51.50
+Globex,USA,Payroll Specialist,Professional,25.00,35.75,26.00,37.25
+Globex,USA,Recruiter,Professional,29.50,41.00,32.00,44.50
+Globex,USA,HR Generalist,Professional,28.25,38.50,31.00,42.25
+Globex,USA,Help Desk Technician I,Professional,21.25,27.00,23.00,29.25
+Globex,USA,Data Analyst,Professional,34.50,42.75,36.00,44.50
+Globex,USA,Marketing Coordinator,Professional,24.75,30.50,26.00,32.00
+Globex,Canada,Customer Service Rep,Professional,23.50,30.75,24.25,31.75
+Globex,Canada,Data Entry Clerk,Professional,21.50,28.25,22.50,29.50
+Globex,Canada,Receptionist,Professional,22.25,30.75,23.00,31.75
+Globex,Canada,Administrative Assistant,Professional,24.75,31.25,27.00,34.00
+Globex,Canada,Accounts Payable Specialist,Professional,30.75,40.25,30.75,40.25
+Globex,Canada,Staff Accountant,Professional,39.50,51.75,41.00,53.75
+Globex,Canada,Financial Analyst II,Professional,48.75,66.00,48.75,66.00
+Globex,Canada,Payroll Specialist,Professional,32.00,45.75,33.25,47.75
+Globex,Canada,Recruiter,Professional,37.50,52.25,41.00,57.00
+Globex,Canada,HR Generalist,Professional,36.25,49.50,39.75,54.25
+Globex,Canada,Help Desk Technician I,Professional,27.25,34.50,29.50,37.50
+Globex,Canada,Data Analyst,Professional,44.00,54.50,46.00,57.00
+Globex,Canada,Marketing Coordinator,Professional,31.75,39.00,33.25,41.00
